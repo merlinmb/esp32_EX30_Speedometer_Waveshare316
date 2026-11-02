@@ -8,7 +8,7 @@
 
 enum class Units : uint8_t { MPH = 0, KMH = 1 };
 enum class Smoothing : uint8_t { Low = 0, Medium = 1, High = 2 };
-enum class AlertMode : uint8_t { Off = 0, Haptic = 1, HapticTone = 2 };
+enum class AlertMode : uint8_t { Off = 0, Visual = 1, VisualReminder = 2 };
 // Designs, in the order the touch zones / Key A step through them.
 enum Design : uint8_t { DESIGN_A = 0, DESIGN_B1 = 1, DESIGN_B2 = 2, DESIGN_C = 3, DESIGN_D = 4, DESIGN_COUNT = 5 };
 const char* designName(uint8_t d);
@@ -44,7 +44,7 @@ struct Settings {
   Units units = Units::MPH;
   uint8_t gpsHz = 10;               // 1, 5 or 10
   Smoothing smoothing = Smoothing::Medium;
-  AlertMode alertMode = AlertMode::Haptic;
+  AlertMode alertMode = AlertMode::Visual;
   uint8_t alertLimit = 0;           // in display units, 0 = off
   BrightMode brightMode = BrightMode::AutoSun;
   uint8_t fixedLevel = 0;           // index into brightness steps (0 = brightest)

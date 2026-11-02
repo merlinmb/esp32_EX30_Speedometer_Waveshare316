@@ -1,20 +1,10 @@
-// EX30 GPS speedometer for the M5Stack StopWatch (ESP32-S3, 466x466 AMOLED)
-// with the M5Stack GPS/BDS Unit v1.1 (AT6668) on the side port.
-//
-// Buttons (driving):
-//   Key A press        next design: A, B1, B2, C, D
-//   Key A hold 1 s     reset trip, max and average
-//   Key A double press status page (GPS, Wi-Fi, API, battery)
-//   Key B press        brightness nudge: Auto, +1, -1, -2
-//   Key B hold 1 s     settings menu
-//   A + B hold 2 s     set speed alert to current speed (nearest 10); when stopped, clear it
-// Touch zones: centre = status page on/off, top = brighter, bottom = dimmer,
-//              right = next design, left = previous design
-// In settings: A next item, B change value, hold B save and exit.
+// EX30 GPS speedometer for the Waveshare ESP32-S3-LCD-3.16.
+// Short press changes design; hold opens settings. In settings, short press changes a
+// value, hold advances to the next item, and a 3 s hold saves and exits.
 // Stopped for 'Dim screen' minutes -> dims; 'Screen off' minutes later -> display off.
-// Movement over ~3 mph for 3 s, USB power returning, or any key/touch wakes it.
+// Movement over ~3 mph for 3 s or the BOOT key wakes it.
 
-#include <M5Unified.h>
+#include "waveshare_board.h"
 #include <time.h>
 #include <sys/time.h>
 #include "settings.h"
@@ -26,7 +16,6 @@
 #include "ui.h"
 
 static SpeedFilter filter;
-static StillDetector still;
 static Brightness brightness;
 static UiModel lastModel;
 static Overlay overlay = Overlay::None;
@@ -37,33 +26,8 @@ static int menuIndex = 0;
 static uint8_t lastBrightSent = 0;
 static uint8_t appliedHz = 0;
 static bool timeSet = false;
-static int batteryPct = 0;
 static bool alerted = false;
-static bool comboActive = false;
-static uint32_t comboStart = 0;
 static bool tripDirty = false;
-
-// ---------------- haptics ----------------
-static uint16_t hapPattern[6];
-static int hapLen = 0, hapPos = 0;
-static uint32_t hapNext = 0;
-
-static void vibrate(std::initializer_list<uint16_t> pattern) {
-  hapLen = 0;
-  for (auto v : pattern) if (hapLen < 6) hapPattern[hapLen++] = v;
-  hapPos = 0;
-  hapNext = 0;
-}
-static void hapticTick(uint32_t now) {
-  if (hapPos >= hapLen || now < hapNext) return;
-  bool on = (hapPos % 2) == 0;          // even entries = on time, odd = gap
-  M5.Power.setVibration(on ? 180 : 0);
-  hapNext = now + hapPattern[hapPos];
-  hapPos++;
-}
-static void hapticFinish(uint32_t now) {
-  if (hapLen && hapPos >= hapLen && now >= hapNext) { M5.Power.setVibration(0); hapLen = 0; }
-}
 
 static void showToast(const char* msg, uint32_t ms = 1600) {
   strncpy(toast, msg, sizeof(toast) - 1);
@@ -106,33 +70,10 @@ static void syncClock(uint32_t now) {
     timeSet = true;
     struct tm u;
     gmtime_r(&g, &u);
-    M5.Rtc.setDateTime(&u);              // RTC kept in UTC
   }
 }
 
-static void clockFromRtc() {
-  if (!M5.Rtc.isEnabled()) return;
-  auto dt = M5.Rtc.getDateTime();
-  if (dt.date.year < 2024) return;
-  struct tm t = {};
-  t.tm_year = dt.date.year - 1900;
-  t.tm_mon = dt.date.month - 1;
-  t.tm_mday = dt.date.date;
-  t.tm_hour = dt.time.hours;
-  t.tm_min = dt.time.minutes;
-  t.tm_sec = dt.time.seconds;
-  setenv("TZ", "UTC0", 1);
-  tzset();
-  time_t r = mktime(&t);
-  applyTz();
-  struct timeval tv = {r, 0};
-  settimeofday(&tv, nullptr);
-  timeSet = true;
-}
-
 // ---------------- settings menu ----------------
-static const int8_t NUDGES[] = {0, 1, -1, -2};
-
 struct MenuItem { const char* title; void (*value)(char*, size_t); void (*change)(); };
 
 static void vUnits(char* b, size_t n) { snprintf(b, n, "%s", settings.units == Units::MPH ? "mph" : "km/h"); }
@@ -159,7 +100,7 @@ static void vHz(char* b, size_t n) { snprintf(b, n, "%u Hz", settings.gpsHz); }
 static void cHz() { settings.gpsHz = settings.gpsHz == 10 ? 1 : (settings.gpsHz == 1 ? 5 : 10); }
 static void vSmooth(char* b, size_t n) { const char* v[] = {"Low", "Medium", "High"}; snprintf(b, n, "%s", v[(int)settings.smoothing]); }
 static void cSmooth() { settings.smoothing = (Smoothing)(((int)settings.smoothing + 1) % 3); }
-static void vAlert(char* b, size_t n) { const char* v[] = {"Off", "Vibrate", "Vibrate + tone"}; snprintf(b, n, "%s", v[(int)settings.alertMode]); }
+static void vAlert(char* b, size_t n) { const char* v[] = {"Off", "Visual", "Visual reminder"}; snprintf(b, n, "%s", v[(int)settings.alertMode]); }
 static void cAlert() { settings.alertMode = (AlertMode)(((int)settings.alertMode + 1) % 3); }
 static void vLimit(char* b, size_t n) {
   if (!settings.alertLimit) snprintf(b, n, "Off");
@@ -177,7 +118,7 @@ static void vWifi(char* b, size_t n) {
   else snprintf(b, n, "On, not connected");
 }
 static void cWifi() { settings.wifiEnabled = !settings.wifiEnabled; }
-static void vSetup(char* b, size_t n) { snprintf(b, n, "Press B to start"); }
+static void vSetup(char* b, size_t n) { snprintf(b, n, "Short press to start"); }
 static void cSetup() { netStartPortal(); overlay = Overlay::WifiSetup; }
 static void vTele(char* b, size_t n) {
   if (!settings.apiUrl[0]) snprintf(b, n, "Set URL on web page");
@@ -205,7 +146,7 @@ static void cIdleOff() {
   settings.idleOffMin = V[(i + 1) % 6];
 }
 static void resetTrip();
-static void vTrip(char* b, size_t n) { snprintf(b, n, "Press B to reset"); }
+static void vTrip(char* b, size_t n) { snprintf(b, n, "Short press to reset"); }
 static void cTrip() { resetTrip(); showToast("Trip reset"); }
 
 static const MenuItem MENU[] = {
@@ -243,17 +184,12 @@ static void applySettingsChanges() {
 }
 
 // ---------------- inactivity: dim, then screen off ----------------
-// The car counts as stopped unless the smoothed speed stays above ~3 mph for 3 s, so GPS
-// jitter while parked never resets the timer. Any key, touch, real movement or USB power
-// coming on (car switched on) wakes the screen. The first key/touch on a dark screen only wakes it.
+// GPS jitter while parked never resets the timer. The BOOT key wakes a dark screen.
 enum class Screen : uint8_t { On, Dimmed, Off };
 static Screen screen = Screen::On;
 static uint32_t lastActivityMs = 0;
 static uint32_t movingSince = 0;
-static uint32_t swallowUntil = 0;     // ignore input until this time (after a wake-up press)
 static float dimFactor = 1.0f;
-static bool usbPower = false, charging = false;
-static int vbusMv = -1;
 
 static constexpr float MOVING_MS = 1.34f;          // ~3 mph
 static constexpr uint32_t MOVING_CONFIRM_MS = 3000;
@@ -261,21 +197,10 @@ static constexpr uint32_t MOVING_CONFIRM_MS = 3000;
 static void wakeScreen(uint32_t now) {
   lastActivityMs = now;
   if (screen == Screen::Off) {
-    M5.Display.wakeup();
+    boardSetBrightness(lastBrightSent ? lastBrightSent : 255);
     memset(&lastModel, 0xFF, sizeof(lastModel));   // force a full redraw
   }
   screen = Screen::On;
-}
-
-static void updatePower(uint32_t now) {
-  static uint32_t last = 0;
-  if (last && now - last < 2000) return;
-  last = now;
-  bool wasUsb = usbPower;
-  vbusMv = M5.Power.getVBUSVoltage();
-  charging = M5.Power.isCharging() == m5::Power_Class::is_charging_t::is_charging;
-  usbPower = vbusMv > 4000 || (vbusMv < 0 && charging);
-  if (usbPower && !wasUsb && last != 0) wakeScreen(now);   // car switched on
 }
 
 static void updateIdle(uint32_t now, float speedMs, bool busy) {
@@ -294,7 +219,7 @@ static void updateIdle(uint32_t now, float speedMs, bool busy) {
   if (screen == Screen::On && settings.idleDimMin && idle >= dimAt) screen = Screen::Dimmed;
   if (screen == Screen::Dimmed && settings.idleOffMin && idle >= offAt) {
     screen = Screen::Off;
-    M5.Display.sleep();
+    boardSetBrightness(0);
   }
 
   // Ease the dim level so it fades rather than jumps
@@ -308,17 +233,33 @@ static void updateIdle(uint32_t now, float speedMs, bool busy) {
 }
 
 // Returns true when this loop's input should be ignored (it was used to wake the screen).
-static bool inputWakeFilter(uint32_t now) {
-  auto t = M5.Touch.getDetail();
-  bool pressed = M5.BtnA.isPressed() || M5.BtnB.isPressed() || t.isPressed();
-  bool newPress = M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || t.wasPressed();
-  if (newPress) {
-    if (screen != Screen::On) { wakeScreen(now); swallowUntil = UINT32_MAX; vibrate({20}); }
-    else lastActivityMs = now;
+static bool buttonDown = false;
+static bool buttonLong = false;
+static bool buttonVeryLong = false;
+static bool swallowButton = false;
+static uint32_t buttonPressedAt = 0;
+
+enum ButtonEvent : uint8_t { ButtonNone = 0, ButtonShort = 1, ButtonLong = 2, ButtonVeryLong = 4 };
+
+static uint8_t pollButton(uint32_t now) {
+  uint8_t event = ButtonNone;
+  bool down = boardButtonPressed();
+  if (down && !buttonDown) {
+    buttonPressedAt = now;
+    buttonLong = buttonVeryLong = false;
+    if (screen != Screen::On) { wakeScreen(now); swallowButton = true; }
   }
-  if (swallowUntil == UINT32_MAX && !pressed) swallowUntil = now + 600;  // let click detection expire
-  if (pressed) lastActivityMs = now;
-  return now < swallowUntil;
+  if (down) {
+    lastActivityMs = now;
+    uint32_t held = now - buttonPressedAt;
+    if (!buttonLong && held >= 1000) { buttonLong = true; if (!swallowButton) event |= ButtonLong; }
+    if (!buttonVeryLong && held >= 3000) { buttonVeryLong = true; if (!swallowButton) event |= ButtonVeryLong; }
+  } else if (buttonDown && !buttonLong && !swallowButton) {
+    event |= ButtonShort;
+  }
+  if (!down) swallowButton = false;
+  buttonDown = down;
+  return event;
 }
 
 // ---------------- design selection ----------------
@@ -342,121 +283,32 @@ static void stepDesign(int dir) {
   char b[40];
   snprintf(b, sizeof(b), "Design %s", designName(d));
   showToast(b, 1200);
-  vibrate({25});
 }
 
-static void stepBrightness(int dir) {
-  int base = settings.brightMode == BrightMode::Fixed ? settings.fixedLevel : brightness.autoStep();
-  int curStep = constrain(base - settings.brightOffset, 0, BRIGHT_STEPS - 1);
-  int newStep = constrain(curStep - dir, 0, BRIGHT_STEPS - 1);
-  if (newStep == curStep) { showToast(dir > 0 ? "Brightness at maximum" : "Brightness at minimum", 1200); vibrate({20, 60, 20}); return; }
-  settings.brightOffset = base - newStep;
-  brightness.quick = true;
-  tripDirty = true;
-  vibrate({25});
-}
-
-static void toggleStatus(uint32_t now) {
-  if (overlay == Overlay::Status) overlay = Overlay::None;
-  else { overlay = Overlay::Status; overlayUntil = now + 8000; }
-}
-
-// Five touch zones on the round screen: centre circle, and N / E / S / W quarters around it.
-enum class Zone { None, Centre, North, East, South, West };
-static Zone touchZone(int x, int y) {
-  int dx = x - 233, dy = y - 233;
-  if (dx * dx + dy * dy < 95 * 95) return Zone::Centre;
-  if (abs(dy) >= abs(dx)) return dy < 0 ? Zone::North : Zone::South;
-  return dx > 0 ? Zone::East : Zone::West;
-}
-
-// ---------------- buttons ----------------
-static void handleButtons(uint32_t now, float speedUnits) {
-  auto& A = M5.BtnA;
-  auto& B = M5.BtnB;
-
-  // Combination: both keys held together
-  if (A.isPressed() && B.isPressed()) {
-    if (!comboActive) { comboActive = true; comboStart = now; }
-    if (comboStart && now - comboStart > 2000 && overlay == Overlay::None) {
-      comboStart = 0;  // fire once
-      if (speedUnits < 5) { settings.alertLimit = 0; showToast("Speed alert off"); }
-      else {
-        settings.alertLimit = (uint8_t)(lroundf(speedUnits / 10.0f) * 10);
-        char b[40];
-        snprintf(b, sizeof(b), "Alert at %u %s", settings.alertLimit, settings.units == Units::MPH ? "mph" : "km/h");
-        showToast(b, 2200);
-      }
-      alerted = false;
-      settingsSave();
-      vibrate({60, 80, 60});
-    }
+static void handleButton(uint8_t event) {
+  if (overlay == Overlay::WifiSetup) {
+    if (event & ButtonVeryLong) { netStopPortal(); overlay = Overlay::None; }
     return;
   }
-  if (comboActive) {
-    if (!A.isPressed() && !B.isPressed()) comboActive = false;
-    return;  // swallow the events from the combination
-  }
-
   if (overlay == Overlay::Settings) {
-    if (A.wasSingleClicked() || A.wasDoubleClicked()) { menuIndex = (menuIndex + 1) % MENU_COUNT; vibrate({25}); }
-    if (B.wasSingleClicked() || B.wasDoubleClicked()) { MENU[menuIndex].change(); applySettingsChanges(); vibrate({25}); }
-    if (B.wasHold()) {
+    if (event & ButtonVeryLong) {
       settingsSave();
       applySettingsChanges();
-      if (overlay == Overlay::Settings) overlay = Overlay::None;
-      showToast("Settings saved");
-      vibrate({50, 70, 50});
-    }
-    return;
-  }
-  if (overlay == Overlay::WifiSetup) {
-    if (B.wasHold() || A.wasHold()) { netStopPortal(); overlay = Overlay::None; vibrate({40}); }
-    return;
-  }
-  if (overlay == Overlay::Status) {
-    // Close on a completed press so the same press does not also act on the driving screen
-    if (A.wasSingleClicked() || A.wasDoubleClicked() || A.wasHold() ||
-        B.wasSingleClicked() || B.wasDoubleClicked() || B.wasHold()) {
       overlay = Overlay::None;
+      showToast("Settings saved");
+    } else if (event & ButtonLong) {
+      menuIndex = (menuIndex + 1) % MENU_COUNT;
+    } else if (event & ButtonShort) {
+      MENU[menuIndex].change();
+      applySettingsChanges();
     }
     return;
   }
-
-  // Driving screen
-  if (A.wasSingleClicked()) stepDesign(+1);
-  if (A.wasDoubleClicked()) { overlay = Overlay::Status; overlayUntil = now + 8000; }
-  if (A.wasHold()) { resetTrip(); showToast("Trip reset"); vibrate({60, 80, 60}); }
-
-  if (B.wasSingleClicked() || B.wasDoubleClicked()) {
-    int idx = 0;
-    for (int i = 0; i < 4; i++) if (NUDGES[i] == settings.brightOffset) idx = i;
-    settings.brightOffset = NUDGES[(idx + 1) % 4];
-    brightness.quick = true;
-    tripDirty = true;  // saved with the next periodic save
-    vibrate({25});
-  }
-  if (B.wasHold()) { overlay = Overlay::Settings; menuIndex = 0; vibrate({40}); }
-
-}
-
-static void handleTouch(uint32_t now) {
-  if (overlay == Overlay::Settings || overlay == Overlay::WifiSetup || netOtaProgress >= 0) return;
-  auto t = M5.Touch.getDetail();
-  if (!t.wasClicked()) return;
-  Zone z = touchZone(t.x, t.y);
-  if (overlay == Overlay::Status) {           // any tap closes the status page
-    overlay = Overlay::None;
-    vibrate({20});
-    return;
-  }
-  switch (z) {
-    case Zone::Centre: toggleStatus(now); vibrate({20}); break;
-    case Zone::North:  stepBrightness(+1); break;
-    case Zone::South:  stepBrightness(-1); break;
-    case Zone::East:   stepDesign(+1); break;
-    case Zone::West:   stepDesign(-1); break;
-    default: break;
+  if (event & ButtonLong) {
+    overlay = Overlay::Settings;
+    menuIndex = 0;
+  } else if (event & ButtonShort) {
+    stepDesign(+1);
   }
 }
 
@@ -534,21 +386,11 @@ static void serialConsole() {
 
 // ---------------- setup / loop ----------------
 void setup() {
-  auto cfg = M5.config();
-  cfg.output_power = true;       // 5 V out to the side port for the GPS unit
-  cfg.internal_imu = true;
-  cfg.internal_rtc = true;
-  cfg.internal_spk = true;
-  cfg.serial_baudrate = 115200;
-  M5.begin(cfg);
-  M5.Power.setExtOutput(true);   // make sure the port 5 V is on
-  M5.Display.setBrightness(255);
-  M5.BtnA.setHoldThresh(1000);
-  M5.BtnB.setHoldThresh(1000);
+  Serial.begin(115200);
+  boardBegin();
 
   settingsLoad();
   applyTz();
-  clockFromRtc();
 
   uiBegin();
   UiModel splash;
@@ -569,20 +411,11 @@ void setup() {
 }
 
 void loop() {
-  M5.update();
   uint32_t now = millis();
-
-  // --- sensors ---
-  static uint32_t lastImu = 0;
-  if (M5.Imu.isEnabled() && now - lastImu >= 20) {
-    lastImu = now;
-    float ax, ay, az;
-    if (M5.Imu.getAccel(&ax, &ay, &az)) still.update(ax, ay, az, now);
-  }
 
   if (gpsPoll()) {
     static uint32_t lastSampleMs = 0;
-    filter.addSample(gps.speedMs, now, still.available && still.still());
+    filter.addSample(gps.speedMs, now, false);
     float dt = lastSampleMs ? (now - lastSampleMs) / 1000.0f : 0;
     lastSampleMs = now;
     float v = filter.filteredMs();
@@ -605,15 +438,9 @@ void loop() {
   int speedInt = filter.displayInt(unitsPerMs);
   float speedUnits = filter.filteredMs() * unitsPerMs;
 
-  updatePower(now);
   bool busy = overlay == Overlay::Settings || overlay == Overlay::WifiSetup || netOtaProgress >= 0;
   updateIdle(now, filter.filteredMs(), busy);
-  if (!inputWakeFilter(now)) {
-    handleButtons(now, speedUnits);
-    handleTouch(now);
-  }
-  hapticTick(now);
-  hapticFinish(now);
+  handleButton(pollButton(now));
 
   // --- brightness / design ---
   time_t utc = time(nullptr);
@@ -623,7 +450,7 @@ void loop() {
   uint8_t wantLevel = (uint8_t)max(4.0f, brightness.level() * dimFactor);
   if (screen != Screen::Off && wantLevel != lastBrightSent) {
     lastBrightSent = wantLevel;
-    M5.Display.setBrightness(lastBrightSent);
+    boardSetBrightness(lastBrightSent);
   }
   if (brightness.nightDesign() != lastNightState) { lastNightState = brightness.nightDesign(); nightPick = -1; }
   uint8_t design = currentDesign();
@@ -633,14 +460,12 @@ void loop() {
   bool over = settings.alertLimit && gps.fix && speedInt > settings.alertLimit;
   if (over && !alerted && settings.alertMode != AlertMode::Off) {
     alerted = true;
-    vibrate({120, 100, 120});
-    if (settings.alertMode == AlertMode::HapticTone) M5.Speaker.tone(2200, 160);
+    showToast("Speed alert limit reached", 2200);
   }
   if (!over && speedInt < (int)settings.alertLimit - 1) alerted = false;
 
   // --- periodic jobs ---
-  static uint32_t lastBattery = 0, lastSave = 0, lastSample = 0;
-  if (now - lastBattery > 10000 || lastBattery == 0) { lastBattery = now; batteryPct = M5.Power.getBatteryLevel(); }
+  static uint32_t lastSave = 0, lastSample = 0;
   if (gps.fix) { settings.lastLat = gps.lat; settings.lastLon = gps.lon; }
   if (tripDirty && now - lastSave > 120000) { lastSave = now; tripDirty = false; settingsSaveTrip(); }
 
@@ -664,10 +489,6 @@ void loop() {
   liveData.hz = gps.measuredHz;
   liveData.brightnessPct = brightness.percent();
   liveData.night = night;
-  liveData.battery = batteryPct;
-  liveData.usbPower = usbPower;
-  liveData.charging = charging;
-  liveData.vbusMv = vbusMv;
   liveData.screen = (uint8_t)screen;
 
   if (overlay == Overlay::Status && now > overlayUntil) overlay = Overlay::None;
@@ -754,8 +575,6 @@ void loop() {
     float maxU = settings.tripMaxMs * unitsPerMs;
     float avgU = settings.tripMovingSec > 1 ? settings.tripMeters / settings.tripMovingSec * unitsPerMs : 0;
     snprintf(m.lines[i++], 48, "Trip %s \xC2\xB7 max %.0f \xC2\xB7 avg %.0f", m.trip, maxU, avgU);
-    if (usbPower) snprintf(m.lines[i++], 48, "Battery %d%% \xC2\xB7 USB %.1f V%s", batteryPct, vbusMv / 1000.0f, charging ? " \xC2\xB7 charging" : "");
-    else snprintf(m.lines[i++], 48, "Battery %d%% \xC2\xB7 on battery", batteryPct);
     m.lineCount = i;
   } else if (overlay == Overlay::WifiSetup) {
     strncpy(m.apSsid, netPortalActive() ? netPortalSsid() : "Starting...", sizeof(m.apSsid) - 1);

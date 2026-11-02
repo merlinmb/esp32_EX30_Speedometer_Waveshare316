@@ -58,7 +58,7 @@ button.sec{background:#25303a;color:var(--txt)}
 <label>Fixed level<select id="fixedLevel"><option value="0">100%</option><option value="1">75%</option><option value="2">50%</option><option value="3">30%</option><option value="4">15%</option></select></label>
 <label>GPS updates<select id="gpsHz"><option value="1">1 Hz</option><option value="5">5 Hz</option><option value="10">10 Hz</option></select></label>
 <label>Smoothing<select id="smoothing"><option value="0">Low</option><option value="1">Medium</option><option value="2">High</option></select></label>
-<label>Speed alert<select id="alertMode"><option value="0">Off</option><option value="1">Vibrate</option><option value="2">Vibrate and tone</option></select></label>
+<label>Speed alert<select id="alertMode"><option value="0">Off</option><option value="1">Visual</option><option value="2">Visual reminder</option></select></label>
 <label>Alert limit (0 = off)<input type="number" id="alertLimit" min="0" max="200" step="1"></label>
 <label>Dim after stopped for (min, 0 = never)<input type="number" id="idleDimMin" min="0" max="60"></label>
 <label>Then screen off after (min, 0 = stay dim)<input type="number" id="idleOffMin" min="0" max="60"></label>
@@ -83,7 +83,7 @@ button.sec{background:#25303a;color:var(--txt)}
 </section>
 
 <div class="row"><button onclick="save()">Save settings</button><button class="sec" onclick="post('/api/trip/reset',{}).then(()=>toast('Trip reset'))">Reset trip</button></div>
-<p class="sub">Tip: on the device, hold Key B for settings. Wi-Fi setup is in that menu.</p>
+<p class="sub">Tip: hold the BOOT key to open settings. Wi-Fi setup is in that menu.</p>
 </main><div id="toast"></div>
 <script>
 const EL=[['background','Background'],['speed','Speed digits'],['unit','Units label'],['ringTrack','Ring, unlit'],['ringFill','Ring, lit'],['status','Top status text'],['statusIcon','Status icon'],['info','Bottom info line'],['alert','Over limit'],['tickMajor','Gauge major ticks (B)'],['tickMinor','Gauge minor ticks (B)'],['tickLabel','Gauge numbers (B)'],['limitMark','Limit marker (B)']];
@@ -127,7 +127,7 @@ $('scanstate').textContent='';const d=$('scan');d.innerHTML='';(r.networks||[]).
 e.innerHTML='<span>'+esc(n.ssid)+' <span class="sub">'+n.rssi+' dBm'+(n.open?' open':'')+'</span></span>';const g=document.createElement('span');g.className='row';[0,1].forEach(i=>{const b=document.createElement('button');b.className='sec';b.textContent='Use as '+(i+1);
 b.onclick=()=>{$('n'+i).value=n.ssid;$('p'+i).value='';$('p'+i).focus();toast('Enter the password, then save network '+(i+1))};g.appendChild(b)});e.appendChild(g);d.appendChild(e)})}
 async function live(){try{const l=await get('/api/status');
-$('live').textContent=(l.fix?l.speed+' '+(S.units==1?'km/h':'mph'):'No GPS fix')+' · '+l.sats+' sats · '+l.hz.toFixed(1)+' Hz · brightness '+l.bright+'%'+(l.night?' (night)':'')+' · battery '+l.battery+'%'+(l.usb?(l.charging?' (USB, charging)':' (USB)'):' (on battery)')+(l.screen==2?' · screen off':l.screen==1?' · screen dimmed':'');
+$('live').textContent=(l.fix?l.speed+' '+(S.units==1?'km/h':'mph'):'No GPS fix')+' · '+l.sats+' sats · '+l.hz.toFixed(1)+' Hz · brightness '+l.bright+'%'+(l.night?' (night)':'')+(l.screen==2?' · screen off':l.screen==1?' · screen dimmed':'');
 $('wifistate').textContent=l.wifi?('Connected to '+l.ssid+' ('+l.ip+', '+l.rssi+' dBm)'):'Not connected to Wi-Fi';
 $('tele').textContent='Queued '+l.queued+', sent '+l.sent+', last HTTP '+l.http}catch(e){}}
 load();live();setInterval(live,2000);

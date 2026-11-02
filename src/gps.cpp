@@ -1,6 +1,4 @@
-// GPS/BDS Unit v1.1 (AT6668, CASIC protocol) on the StopWatch side port.
-// Port A: yellow = G10, white = G11. The receiver's TX normally lands on G10;
-// we probe both ways round and at 115200 / 9600 baud, so either is fine.
+// AT6668 GPS receiver on the Waveshare UART connector.
 #include "gps.h"
 #include "settings.h"
 #include <TinyGPSPlus.h>
@@ -9,8 +7,8 @@ GpsState gps;
 
 static HardwareSerial& GPS_SERIAL = Serial1;
 static TinyGPSPlus parser;
-static constexpr int PORT_PIN_A = 10;  // yellow
-static constexpr int PORT_PIN_B = 11;  // white
+static constexpr int PORT_PIN_A = 44;  // GPS TX -> ESP32 RX
+static constexpr int PORT_PIN_B = 43;  // ESP32 TX -> GPS RX
 
 static uint32_t rmcCount = 0;
 static uint32_t rateWindowStart = 0;

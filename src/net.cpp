@@ -245,10 +245,6 @@ static void hStatus() {
   d["hz"] = liveData.hz;
   d["bright"] = liveData.brightnessPct;
   d["night"] = liveData.night;
-  d["battery"] = liveData.battery;
-  d["usb"] = liveData.usbPower;
-  d["charging"] = liveData.charging;
-  d["vbus"] = liveData.vbusMv;
   d["screen"] = liveData.screen;
   d["wifi"] = WiFi.status() == WL_CONNECTED;
   d["ssid"] = WiFi.SSID();
@@ -282,7 +278,7 @@ static const char UPDATE_PAGE[] = R"HTML(<!doctype html><html lang="en"><head><m
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Firmware update</title>
 <style>body{background:#0b0e11;color:#e8ecef;font:15px system-ui,sans-serif;max-width:560px;margin:0 auto;padding:20px}
 button{background:#2ee6c8;color:#001a16;border:0;border-radius:10px;padding:10px 16px;font-weight:600}</style></head>
-<body><h1>Firmware update</h1><p>Choose <b>.pio/build/m5stack-stopwatch/firmware.bin</b> from the project folder.</p>
+<body><h1>Firmware update</h1><p>Choose <b>.pio/build/waveshare-esp32-s3-lcd-316/firmware.bin</b> from the project folder.</p>
 <form method="POST" action="/update" enctype="multipart/form-data"><input type="file" name="firmware" accept=".bin"><br><br>
 <button>Upload and restart</button></form><p><a href="/" style="color:#2ee6c8">Back to settings</a></p></body></html>)HTML";
 
