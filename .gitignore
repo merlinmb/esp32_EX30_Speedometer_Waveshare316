@@ -13,3 +13,6 @@ secrets.ini
 points.jsonl
 __pycache__/
 docs/images/_render.html
+
+managed_components
+managed_components/*

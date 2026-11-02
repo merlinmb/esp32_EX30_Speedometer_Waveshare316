@@ -134,7 +134,7 @@ void boardBegin() {
   esp_lcd_rgb_panel_config_t config = {};
   config.clk_src = LCD_CLK_SRC_DEFAULT;
   config.dma_burst_size = 64;
-  config.bounce_buffer_size_px = 10 * LCD_WIDTH;
+  config.bounce_buffer_size_px = 20 * LCD_WIDTH;   // Waveshare uses 10 lines; 20 gives more slack
   config.num_fbs = 2;
   config.data_width = 16;
   config.bits_per_pixel = 16;
