@@ -1,20 +1,16 @@
 #pragma once
 
-#include <LovyanGFX.hpp>
-#include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
-#include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
+#include <Arduino.h>
 
-class WaveshareDisplay : public lgfx::LGFX_Device {
- public:
-  WaveshareDisplay();
-
- private:
-  lgfx::Panel_ST7701 panel_;
-  lgfx::Bus_RGB bus_;
-};
-
-extern WaveshareDisplay boardDisplay;
+// Native panel size (portrait). The UI draws rotated, in landscape.
+static constexpr int LCD_WIDTH = 320;
+static constexpr int LCD_HEIGHT = 820;
 
 void boardBegin();
+// Frame buffer (LCD_WIDTH x LCD_HEIGHT, RGB565) to draw the next frame into. It is not
+// on screen; waits if the panel is still scanning it after the last boardPresent().
+uint16_t* boardBackBuffer();
+// Shows the back buffer from the start of the next panel refresh (no tearing).
+void boardPresent();
 void boardSetBrightness(uint8_t brightness);
 bool boardButtonPressed();

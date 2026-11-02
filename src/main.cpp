@@ -179,7 +179,11 @@ static void resetTrip() {
 
 static void applySettingsChanges() {
   filter.setLevel((uint8_t)settings.smoothing);
-  if (appliedHz != settings.gpsHz) { gpsSetRate(settings.gpsHz); appliedHz = settings.gpsHz; }
+  if (appliedHz != settings.gpsHz) {
+    Serial.printf("[Settings] GPS update rate: %u Hz\n", settings.gpsHz);
+    gpsSetRate(settings.gpsHz);
+    appliedHz = settings.gpsHz;
+  }
   applyTz();
 }
 
@@ -387,10 +391,15 @@ static void serialConsole() {
 // ---------------- setup / loop ----------------
 void setup() {
   Serial.begin(115200);
+  Serial.println("\n[Boot] EX30 speedometer starting");
   boardBegin();
+  Serial.println("[Boot] Display initialized");
 
   settingsLoad();
   applyTz();
+  Serial.printf("[Boot] Settings loaded: %s, GPS %u Hz, Wi-Fi %s\n",
+                settings.units == Units::MPH ? "mph" : "km/h", settings.gpsHz,
+                settings.wifiEnabled ? "enabled" : "disabled");
 
   uiBegin();
   UiModel splash;
@@ -400,12 +409,16 @@ void setup() {
   strcpy(splash.toast, "Starting GPS...");
   uiRender(splash);
 
+  Serial.println("[Boot] Detecting GPS receiver...");
   gpsBegin();
+  Serial.printf("[Boot] GPS listening on RX GPIO%d at %lu baud\n", gps.rxPin, (unsigned long)gps.baud);
   appliedHz = settings.gpsHz;
   filter.setLevel((uint8_t)settings.smoothing);
 
   telemetryBegin();
   netBegin();
+  Serial.println("[Boot] Network and telemetry tasks started");
+  Serial.println("[Boot] Send 'status' for details; type 'help' for serial commands");
   memset(&lastModel, 0xFF, sizeof(lastModel));
   lastActivityMs = millis();
 }
@@ -437,6 +450,17 @@ void loop() {
   float unitsPerMs = unitsFromMs(1.0f);
   int speedInt = filter.displayInt(unitsPerMs);
   float speedUnits = filter.filteredMs() * unitsPerMs;
+
+  static uint32_t lastDebug = 0;
+  if (now - lastDebug >= 5000) {
+    lastDebug = now;
+    Serial.printf("[Status] GPS %s, fix %s, sats %u, %.1f Hz, speed %.1f %s | Wi-Fi %s | screen %s | clock %s\n",
+                  gps.connected ? "data" : "silent", gps.fix ? "yes" : "no", gps.sats,
+                  gps.measuredHz, speedUnits, unitsLabel(),
+                  netConnected() ? netIp().c_str() : "disconnected",
+                  screen == Screen::On ? "on" : (screen == Screen::Dimmed ? "dimmed" : "off"),
+                  timeSet ? "synced" : "waiting");
+  }
 
   bool busy = overlay == Overlay::Settings || overlay == Overlay::WifiSetup || netOtaProgress >= 0;
   updateIdle(now, filter.filteredMs(), busy);

@@ -102,6 +102,7 @@ static void uploadTask(void*) {
     xSemaphoreGive(lock);
     if (n == 0) continue;
 
+    Serial.printf("[API] Uploading %lu telemetry points\n", (unsigned long)n);
     int code = postBatch(n);
     xSemaphoreTake(lock, portMAX_DELAY);
     stats.lastHttpCode = code;
@@ -118,6 +119,8 @@ static void uploadTask(void*) {
     }
     stats.queued = count;
     xSemaphoreGive(lock);
+    Serial.printf("[API] Upload result HTTP %d, queue %lu, sent %lu\n",
+                  code, (unsigned long)stats.queued, (unsigned long)stats.sent);
   }
 }
 
@@ -128,5 +131,6 @@ void telemetryBegin() {
     QUEUE_CAP = 300;
     ring = (TelemetryPoint*)malloc(sizeof(TelemetryPoint) * QUEUE_CAP);
   }
+  Serial.printf("[API] Telemetry queue %s (%lu points)\n", ring ? "ready" : "unavailable", (unsigned long)QUEUE_CAP);
   xTaskCreatePinnedToCore(uploadTask, "telemetry", 12288, nullptr, 1, nullptr, 0);
 }

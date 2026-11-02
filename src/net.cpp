@@ -369,8 +369,12 @@ static void startServer() {
 static bool tryConnectBest() {
   bool any = false;
   for (auto& w : settings.wifi) if (w.ssid[0]) any = true;
-  if (!any) return false;
+  if (!any) {
+    Serial.println("[Wi-Fi] No saved networks to try");
+    return false;
+  }
 
+  Serial.println("[Wi-Fi] Scanning for saved networks");
   int n = WiFi.scanNetworks(false, false);
   int rssi[MAX_WIFI];
   for (int k = 0; k < MAX_WIFI; k++) rssi[k] = -1000;
@@ -384,8 +388,12 @@ static bool tryConnectBest() {
   int best = -1;
   if (settings.preferHome && rssi[1] > -1000) best = 1;
   else for (int k = 0; k < MAX_WIFI; k++) if (rssi[k] > -1000 && (best < 0 || rssi[k] > rssi[best])) best = k;
-  if (best < 0) return false;
+  if (best < 0) {
+    Serial.printf("[Wi-Fi] None of the saved networks found (%d networks scanned)\n", n);
+    return false;
+  }
 
+  Serial.printf("[Wi-Fi] Connecting to saved network %d: \"%s\"\n", best + 1, settings.wifi[best].ssid);
   WiFi.begin(settings.wifi[best].ssid, settings.wifi[best].pass);
   uint32_t start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 12000) {
@@ -393,7 +401,10 @@ static bool tryConnectBest() {
     if (portalActive) dns.processNextRequest();
     vTaskDelay(pdMS_TO_TICKS(50));
   }
-  return WiFi.status() == WL_CONNECTED;
+  bool connected = WiFi.status() == WL_CONNECTED;
+  if (connected) Serial.printf("[Wi-Fi] Connected, IP %s, RSSI %d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  else Serial.println("[Wi-Fi] Connection attempt timed out");
+  return connected;
 }
 
 static void doStartPortal() {
@@ -405,10 +416,12 @@ static void doStartPortal() {
   delay(100);
   dns.start(53, "*", WiFi.softAPIP());
   portalActive = true;
+  Serial.printf("[Wi-Fi] Setup portal started: %s, IP %s\n", portalSsid, WiFi.softAPIP().toString().c_str());
   startServer();
 }
 
 static void doStopPortal() {
+  Serial.println("[Wi-Fi] Setup portal stopped");
   dns.stop();
   WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_STA);
@@ -420,6 +433,7 @@ static void netTask(void*) {
   WiFi.setHostname(settings.deviceName);
   WiFi.setAutoReconnect(true);
   uint32_t lastAttempt = 0;
+  wl_status_t previousStatus = WiFi.status();
 
   for (;;) {
     if (portalWanted && !portalActive) doStartPortal();
@@ -443,6 +457,13 @@ static void netTask(void*) {
       startServer();      // settings page also reachable on the phone/home network
       startArduinoOta();  // PlatformIO uploads over Wi-Fi
       ArduinoOTA.handle();
+    }
+
+    wl_status_t status = WiFi.status();
+    if (status != previousStatus) {
+      if (status == WL_CONNECTED) Serial.printf("[Wi-Fi] Link up, IP %s\n", WiFi.localIP().toString().c_str());
+      else Serial.printf("[Wi-Fi] Link state changed: %d\n", (int)status);
+      previousStatus = status;
     }
 
     if (portalActive) dns.processNextRequest();

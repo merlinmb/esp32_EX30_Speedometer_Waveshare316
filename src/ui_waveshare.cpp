@@ -2,13 +2,14 @@
 #include "waveshare_board.h"
 #include "settings.h"
 #include "fonts_vlw.h"
+#include <LovyanGFX.hpp>
 
 static constexpr int WIDTH = 820;
 static constexpr int HEIGHT = 320;
 static constexpr int SPEED_X = 275;
 static constexpr int SPEED_Y = 150;
 
-static lgfx::LGFX_Sprite canvas(&boardDisplay);
+static lgfx::LGFX_Sprite canvas;
 static lgfx::PointerWrapper wSpeed, wSpeedM, wLabel, wSmall, wTitle;
 static lgfx::VLWfont fSpeed, fSpeedM, fLabel, fSmall, fTitle;
 
@@ -47,8 +48,6 @@ static void drawDriving(const UiModel& model) {
   else if (!model.fix) snprintf(status, sizeof(status), "SEARCHING  |  %u SATS  |  %s", model.sats, model.clock);
   else snprintf(status, sizeof(status), "GPS FIX  |  %u SATS  |  %.0f HZ  |  %s", model.sats, model.hz, model.clock);
   drawText(status, 28, 26, &fSmall, color565(theme.status));
-  drawText(model.design == DESIGN_C ? "INFO" : designName(model.design), 790, 26,
-           &fSmall, color565(theme.info), textdatum_t::middle_right);
   canvas.drawFastHLine(28, 48, 764, color565(theme.ringTrack));
 
   char speed[12];
@@ -136,9 +135,9 @@ static void drawUpdate(const UiModel& model) {
 }
 
 void uiBegin() {
-  canvas.setColorDepth(16);
-  canvas.setPsram(true);
-  canvas.createSprite(WIDTH, HEIGHT);
+  // Draws straight into the panel's frame buffers (see uiRender). They are in the panel's
+  // native portrait layout, so the canvas is rotated to draw in landscape.
+  canvas.setColorDepth(lgfx::color_depth_t::rgb565_nonswapped);
   wSpeed.set(font_speed, sizeof(font_speed));
   wSpeedM.set(font_speed_m, sizeof(font_speed_m));
   wLabel.set(font_label, sizeof(font_label));
@@ -152,6 +151,9 @@ void uiBegin() {
 }
 
 void uiRender(const UiModel& model) {
+  // The back buffer is off screen; the whole frame is redrawn into it, then swapped in.
+  canvas.setBuffer(boardBackBuffer(), LCD_WIDTH, LCD_HEIGHT);
+  canvas.setRotation(1);
   switch (model.overlay) {
     case Overlay::Settings: drawSettings(model); break;
     case Overlay::Status: drawStatus(model); break;
@@ -159,5 +161,5 @@ void uiRender(const UiModel& model) {
     case Overlay::Update: drawUpdate(model); break;
     default: drawDriving(model); break;
   }
-  canvas.pushSprite(0, 0);
+  boardPresent();
 }

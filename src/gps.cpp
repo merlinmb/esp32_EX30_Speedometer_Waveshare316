@@ -63,7 +63,10 @@ void gpsBegin() {
 
   for (uint32_t baud : bauds) {
     for (auto& pr : pins) {
-      if (probe(pr[0], pr[1], baud, 1300) >= 2) {
+      uint32_t checks = probe(pr[0], pr[1], baud, 1300);
+      Serial.printf("[GPS] Probe RX GPIO%d at %lu baud: %lu valid sentences\n",
+                    pr[0], (unsigned long)baud, (unsigned long)checks);
+      if (checks >= 2) {
         gps.rxPin = pr[0];
         gps.txPin = pr[1];
         gps.baud = baud;
@@ -75,6 +78,7 @@ void gpsBegin() {
 
   if (!gps.baud) {
     // Nothing heard yet (cold module or wiring issue). Default orientation; keep listening.
+    Serial.println("[GPS] No receiver response; listening on default pins at 115200 baud");
     gps.rxPin = PORT_PIN_A;
     gps.txPin = PORT_PIN_B;
     gps.baud = 115200;
@@ -85,6 +89,7 @@ void gpsBegin() {
 
   if (gps.baud != 115200) {
     // 10 Hz needs more than 9600 baud: switch the receiver to 115200 ($PCAS01,5)
+    Serial.printf("[GPS] Switching receiver from %lu to 115200 baud\n", (unsigned long)gps.baud);
     sendCasic("PCAS01,5");
     delay(100);
     GPS_SERIAL.end();
@@ -93,6 +98,7 @@ void gpsBegin() {
   }
 
   configureReceiver();
+  Serial.printf("[GPS] Receiver configured for %u Hz updates\n", settings.gpsHz);
   rateWindowStart = millis();
 }
 
