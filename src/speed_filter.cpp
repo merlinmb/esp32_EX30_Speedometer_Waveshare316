@@ -2,6 +2,8 @@
 #include <math.h>
 
 static constexpr float STOP_THRESHOLD_MS = 0.6f;      // ~1.3 mph: below this treat as stopped
+static constexpr float START_THRESHOLD_MS = 1.0f;     // ~2.2 mph: needed to leave standstill...
+static constexpr uint32_t START_HOLD_MS = 1000;       // ...continuously for this long
 static constexpr float STOP_IMU_THRESHOLD_MS = 1.4f;  // ~3 mph: below this AND IMU still -> 0
 static constexpr float HYSTERESIS = 0.60f;            // how far past a whole number before changing
 
@@ -9,11 +11,23 @@ void SpeedFilter::reset() {
   _filtered = _display = 0;
   _shown = 0;
   _primed = false;
+  _moving = false;
+  _startSinceMs = 0;
 }
 
 void SpeedFilter::addSample(float v, uint32_t now, bool imuStill) {
   if (v < 0 || isnan(v)) v = 0;
   if (v < STOP_THRESHOLD_MS || (imuStill && v < STOP_IMU_THRESHOLD_MS)) v = 0;
+  // At rest, GPS speed noise comes in short bursts of 1-3 mph. Only leave standstill once
+  // the speed has stayed above the start threshold for a while.
+  if (!_moving) {
+    if (v < START_THRESHOLD_MS) _startSinceMs = 0;
+    else if (!_startSinceMs) _startSinceMs = now;
+    if (_startSinceMs && now - _startSinceMs >= START_HOLD_MS) _moving = true;
+    else v = 0;
+  } else if (v == 0) {
+    _moving = false;
+  }
 
   if (!_primed) {
     _filtered = v;

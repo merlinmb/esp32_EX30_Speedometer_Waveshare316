@@ -120,7 +120,23 @@ static bool swapPending = false;
 
 // Called when the driver has sent a whole frame; the next refresh starts from the newly
 // presented frame buffer, so the previous one is free to draw into.
+#ifdef LCD_TIMING_CHECK
+// Build with -DLCD_TIMING_CHECK to log off-timing frames (each one is a visible jump).
+// A frame is (320+66) x (820+80) / 18 MHz = 19.3 ms; see docs/display.md.
+static volatile int64_t lastFrameUs = 0;
+static volatile uint32_t badPeriodUs = 0;
+static constexpr uint32_t FRAME_US = 19300;
+#endif
+
 static bool IRAM_ATTR onFrameComplete(esp_lcd_panel_handle_t, const esp_lcd_rgb_panel_event_data_t*, void*) {
+#ifdef LCD_TIMING_CHECK
+  int64_t now = esp_timer_get_time();
+  if (lastFrameUs) {
+    uint32_t period = (uint32_t)(now - lastFrameUs);
+    if ((period > FRAME_US + 150 || period + 150 < FRAME_US) && !badPeriodUs) badPeriodUs = period;
+  }
+  lastFrameUs = now;
+#endif
   BaseType_t woken = pdFALSE;
   xSemaphoreGiveFromISR(refreshStarted, &woken);
   return woken == pdTRUE;
@@ -183,6 +199,14 @@ uint16_t* boardBackBuffer() {
   }
   return frameBuffers[backIndex];
 }
+
+#ifdef LCD_TIMING_CHECK
+uint32_t boardTakeLcdGlitch() {
+  uint32_t period = badPeriodUs;
+  badPeriodUs = 0;
+  return period;
+}
+#endif
 
 const uint16_t* boardFrontBuffer() {
   return frameBuffers[backIndex ^ 1];

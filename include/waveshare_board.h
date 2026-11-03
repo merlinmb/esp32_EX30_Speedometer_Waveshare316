@@ -14,5 +14,9 @@ uint16_t* boardBackBuffer();
 const uint16_t* boardFrontBuffer();
 // Shows the back buffer from the start of the next panel refresh (no tearing).
 void boardPresent();
+#ifdef LCD_TIMING_CHECK
+// Period in us of an off-timing LCD frame since the last call, or 0.
+uint32_t boardTakeLcdGlitch();
+#endif
 void boardSetBrightness(uint8_t brightness);
 bool boardButtonPressed();

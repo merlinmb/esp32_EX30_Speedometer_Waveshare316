@@ -15,6 +15,13 @@
 #include "net.h"
 #include "ui.h"
 
+// LovyanGFX copies each VLW glyph onto the stack (alloca(w * h)). The speed digits are up
+// to 26.9 KB and the update-screen digits 14.6 KB, more than the default 8 KB loop stack:
+// the first digit drawn (when a GPS fix arrives) overflowed it and rebooted.
+SET_LOOP_TASK_STACK_SIZE(36 * 1024);
+
+static constexpr uint32_t FIX_SETTLE_MS = 5000;   // ignore GPS speed for this long after a fix is gained
+static constexpr float MAX_SPEED_HDOP = 2.5f;      // and while HDOP is worse than this
 static SpeedFilter filter;
 static Brightness brightness;
 static UiModel lastModel;
@@ -425,10 +432,20 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
+#ifdef LCD_TIMING_CHECK
+  if (uint32_t p = boardTakeLcdGlitch()) Serial.printf("[LCD] %lu ms: frame took %lu us (normal 19300)\n", (unsigned long)now, (unsigned long)p);
+#endif
 
-  if (gpsPoll()) {
+  bool newSample = gpsPoll();
+  // A fresh or weak fix reports a few mph of speed while standing still. Ignore the speed
+  // until the fix has settled and while the geometry is poor.
+  static uint32_t fixSinceMs = 0;
+  if (!gps.fix) fixSinceMs = 0;
+  else if (!fixSinceMs) fixSinceMs = now;
+  if (newSample) {
     static uint32_t lastSampleMs = 0;
-    filter.addSample(gps.speedMs, now, false);
+    bool trusted = now - fixSinceMs >= FIX_SETTLE_MS && gps.hdop <= MAX_SPEED_HDOP;
+    filter.addSample(trusted ? gps.speedMs : 0, now, false);
     float dt = lastSampleMs ? (now - lastSampleMs) / 1000.0f : 0;
     lastSampleMs = now;
     float v = filter.filteredMs();
@@ -454,9 +471,9 @@ void loop() {
   static uint32_t lastDebug = 0;
   if (now - lastDebug >= 5000) {
     lastDebug = now;
-    Serial.printf("[Status] GPS %s, fix %s, sats %u, %.1f Hz, speed %.1f %s | Wi-Fi %s | screen %s | clock %s\n",
-                  gps.connected ? "data" : "silent", gps.fix ? "yes" : "no", gps.sats,
-                  gps.measuredHz, speedUnits, unitsLabel(),
+    Serial.printf("[Status] GPS %s, fix %s, sats %u, HDOP %.1f, %.1f Hz, speed %.1f %s (raw %.1f) | Wi-Fi %s | screen %s | clock %s\n",
+                  gps.connected ? "data" : "silent", gps.fix ? "yes" : "no", gps.sats, gps.hdop,
+                  gps.measuredHz, speedUnits, unitsLabel(), unitsFromMs(gps.speedMs),
                   netConnected() ? netIp().c_str() : "disconnected",
                   screen == Screen::On ? "on" : (screen == Screen::Dimmed ? "dimmed" : "off"),
                   timeSet ? "synced" : "waiting");

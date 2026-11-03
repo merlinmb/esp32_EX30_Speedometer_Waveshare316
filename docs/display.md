@@ -19,7 +19,7 @@ Getting this stable took many attempts. The settings below are the ones that wor
 | Timings | HSYNC 30/6/30, VSYNC 20/40/20 (front/pulse/back), default polarities | `boardBegin()` |
 | Panel init | Waveshare's ST7701S command table, sent over 3-wire SPI | `INIT_CMDS` |
 | Build options | `CONFIG_SPIRAM_XIP_FROM_PSRAM=y`, `CONFIG_LCD_RGB_ISR_IRAM_SAFE=y` | `custom_sdkconfig` in `platformio.ini` |
-| Drawing | LovyanGFX sprite drawing straight into the back frame buffer, rotated 1, `rgb565_nonswapped` | `src/ui_waveshare.cpp` |
+| Drawing | LovyanGFX sprite drawing straight into the back frame buffer, rotated 3 (USB connector on the right), `rgb565_nonswapped` | `src/ui_waveshare.cpp` |
 | Redraws | only the screen regions whose data changed | `uiRender()` |
 
 The driver settings match Waveshare's demo (`Arduino/examples/08_LVGL_V9_Test/lvgl_port.c`)
@@ -39,7 +39,32 @@ them uses Wi-Fi, so neither needs the build options.
 | Pixel clock 12 MHz | visible flicker | That's a 36 Hz refresh. Lowering the clock doesn't fix the jumps anyway. |
 | `WiFi.setSleep(false)` | no change | Modem sleep wasn't the cause. Leave Wi-Fi power saving on. |
 
+## Loop stack size
+
+LovyanGFX copies each VLW font glyph onto the stack (`alloca(w * h)` in
+`VLWfont::drawChar`). The largest glyphs are big:
+
+| Font | Used for | Largest glyph |
+|---|---|---|
+| `font_speed` (220 px) | firmware-update percentage | 14.6 KB |
+| `font_speed_m` (300 px) | speed digits | 26.9 KB |
+
+The default Arduino loop stack is 8 KB, so `main.cpp` sets
+`SET_LOOP_TASK_STACK_SIZE(36 * 1024)`. Without it, the first speed digit drawn
+overflows the stack (`Stack canary watchpoint triggered (loopTask)`) and the board
+reboots in a loop as soon as it gets a GPS fix. Indoors this never shows, because with no
+fix the speed is drawn as `--`. If you add a bigger font, or draw large text from another
+task, size that task's stack for its largest glyph plus about 4 KB.
+
 ## Building
+
+- Use **PlatformIO Core 6.1.19** with platform 55.03.39. PlatformIO Core 6.2.0
+  (`6.2.0.post1`) wants SCons 4.11.1 and this platform wants 4.8.1. They replace each
+  other mid-build (`No module named 'SCons.Tool.FortranCommon'`), and the platform deletes
+  any other SCons version, so pinning it doesn't help. Newer platforms require Core
+  `>=6.2.0`, which rejects `6.2.0.post1` itself. If the IDE upgrades Core again, put it
+  back with
+  `~/.platformio/penv/Scripts/python.exe -m pip install platformio==6.1.19`.
 
 - `custom_sdkconfig` makes PlatformIO rebuild the Arduino core from ESP-IDF. The first
   build, or any build after the build folder is deleted, takes about 7 minutes.
@@ -65,24 +90,20 @@ them uses Wi-Fi, so neither needs the build options.
 Judging by eye is unreliable and slow. To check a display change, time the panel's
 frames: at 18 MHz each one takes (320 + 66) x (820 + 80) / 18 MHz = 19.3 ms. A held-up
 refill shows as one frame 150-300 us late followed by one equally early, and that's a
-visible jump. Add this temporarily to `src/waveshare_board.cpp`:
+visible jump.
 
-```cpp
-static volatile int64_t lastFrameUs = 0;
-static volatile uint32_t badPeriodUs = 0;
-static constexpr uint32_t FRAME_US = 19300;   // recompute if pclk or porches change
+The check is built in but off by default. Build with `-DLCD_TIMING_CHECK`, for example
+from PowerShell:
 
-// at the top of onFrameComplete():
-int64_t now = esp_timer_get_time();
-if (lastFrameUs) {
-  uint32_t period = (uint32_t)(now - lastFrameUs);
-  if ((period > FRAME_US + 150 || period + 150 < FRAME_US) && !badPeriodUs) badPeriodUs = period;
-}
-lastFrameUs = now;
+```powershell
+$env:PLATFORMIO_BUILD_FLAGS = "-DLCD_TIMING_CHECK"; pio run -e waveshare-esp32-s3-lcd-316 -t upload
 ```
 
-Then print `badPeriodUs` from `loop()` and clear it. Leave the board idle for 90 s with
-Wi-Fi connected and count the reports.
+Every off-timing frame then prints `[LCD] ... frame took N us` on serial. If you change
+the pixel clock or porches, recompute `FRAME_US` in `src/waveshare_board.cpp`. Leave the
+board for 90 s with Wi-Fi connected and count the reports. Clear the variable afterwards
+(`Remove-Item Env:PLATFORMIO_BUILD_FLAGS`), or every later build in that shell keeps the
+check.
 
 | Build | Off-timing frames |
 |---|---|

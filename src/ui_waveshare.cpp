@@ -6,8 +6,9 @@
 
 static constexpr int WIDTH = 820;
 static constexpr int HEIGHT = 320;
-static constexpr int SPEED_X = 275;
-static constexpr int SPEED_Y = 150;
+static constexpr int SPEED_X = 260;
+static constexpr int SPEED_BASE = 234;   // baseline of the speed digits (they rise 214 px above it)
+static constexpr int SIDE_X = 540;       // left edge of the right-hand column
 
 static lgfx::LGFX_Sprite canvas;
 static lgfx::PointerWrapper wSpeed, wSpeedM, wLabel, wSmall, wTitle;
@@ -47,36 +48,35 @@ static void drawDriving(const UiModel& model) {
   if (!model.gpsConnected) snprintf(status, sizeof(status), "NO GPS  |  %s", model.clock);
   else if (!model.fix) snprintf(status, sizeof(status), "SEARCHING  |  %u SATS  |  %s", model.sats, model.clock);
   else snprintf(status, sizeof(status), "GPS FIX  |  %u SATS  |  %.0f HZ  |  %s", model.sats, model.hz, model.clock);
-  drawText(status, 28, 26, &fSmall, color565(theme.status));
-  canvas.drawFastHLine(28, 48, 764, color565(theme.ringTrack));
+  drawText(status, SIDE_X, 26, &fSmall, color565(theme.status));
+  canvas.drawFastHLine(SIDE_X, 48, WIDTH - 20 - SIDE_X, color565(theme.ringTrack));
 
   char speed[12];
   if (model.fix) snprintf(speed, sizeof(speed), "%d", model.speed);
   else strcpy(speed, "--");
-  drawText(speed, SPEED_X, SPEED_Y, &fSpeedM,
+  drawText(speed, SPEED_X, SPEED_BASE, &fSpeedM,
            model.fix ? color565(model.overLimit ? theme.alert : theme.speed) : color565(theme.ringTrack),
-           textdatum_t::middle_center);
-  drawText(model.units, SPEED_X, 230, &fLabel, color565(theme.unit), textdatum_t::middle_center);
+           textdatum_t::baseline_center);
+  drawText(model.units, SPEED_X, 258, &fLabel, color565(theme.unit), textdatum_t::middle_center);
 
-  int meterWidth = 470;
-  canvas.drawRoundRect(38, 272, meterWidth, 10, 5, color565(theme.ringTrack));
-  if (model.fix && model.ringMax > 0) {
-    int fill = constrain((int)(meterWidth * model.ringValue / model.ringMax), 0, meterWidth);
-    if (fill) canvas.fillRoundRect(38, 272, fill, 10, 5, accent);
-  }
   if (model.limit > 0) {
+    int meterWidth = 470;
+    canvas.drawRoundRect(25, 277, meterWidth, 10, 5, color565(theme.ringTrack));
+    if (model.fix && model.ringMax > 0) {
+      int fill = constrain((int)(meterWidth * model.ringValue / model.ringMax), 0, meterWidth);
+      if (fill) canvas.fillRoundRect(25, 277, fill, 10, 5, accent);
+    }
     char limit[28];
     snprintf(limit, sizeof(limit), "LIMIT %d %s", model.limit, model.units);
-    drawText(limit, 38, 300, &fSmall, color565(theme.info));
+    drawText(limit, 25, 304, &fSmall, color565(theme.info));
   }
-  if (model.toast[0]) drawText(model.toast, 505, 300, &fSmall, accent, textdatum_t::middle_right);
+  if (model.toast[0]) drawText(model.toast, 495, 304, &fSmall, accent, textdatum_t::middle_right);
 
-  canvas.drawFastVLine(530, 66, 228, color565(theme.ringTrack));
-  drawValue(565, 86, "TRIP", model.tripVal, model.tripUnit, theme);
-  drawValue(700, 86, "MAX", model.maxVal, model.units, theme);
-  drawValue(565, 180, "AVERAGE", model.avgVal, model.units, theme);
-  drawValue(700, 180, "ALTITUDE", model.altVal, "m", theme);
-  drawText(model.heading, 565, 270, &fSmall, color565(theme.info));
+  drawValue(SIDE_X, 86, "TRIP", model.tripVal, model.tripUnit, theme);
+  drawValue(676, 86, "MAX", model.maxVal, model.units, theme);
+  drawValue(SIDE_X, 180, "AVERAGE", model.avgVal, model.units, theme);
+  drawValue(676, 180, "ALTITUDE", model.altVal, "m", theme);
+  drawText(model.heading, SIDE_X, 270, &fSmall, color565(theme.info));
   char bright[20];
   snprintf(bright, sizeof(bright), "LIGHT %u%%", model.brightPct);
   drawText(bright, 790, 270, &fSmall, color565(theme.info), textdatum_t::middle_right);
@@ -157,12 +157,12 @@ void uiBegin() {
 // through any element that changes.
 struct Region { int16_t x, y, w, h; };
 static constexpr Region R_FULL   = {0, 0, WIDTH, HEIGHT};
-static constexpr Region R_STATUS = {0, 0, WIDTH, 48};             // status line (rule at y 48 is static)
-static constexpr Region R_SPEED  = {0, 49, 530, 215};             // speed digits and units
-static constexpr Region R_METER  = {0, 264, 530, 26};             // speed bar
-static constexpr Region R_FOOTER = {0, 290, 530, 30};             // limit and toast
-static constexpr Region R_VALUES = {531, 49, WIDTH - 531, 207};   // trip / max / average / altitude
-static constexpr Region R_INFO   = {531, 256, WIDTH - 531, 64};   // heading and light
+static constexpr Region R_STATUS = {520, 0, WIDTH - 520, 48};     // status line (rule at y 48 is static)
+static constexpr Region R_SPEED  = {36, 12, 448, 230};            // speed digits (up to 3 x 138 px wide)
+static constexpr Region R_METER  = {0, 272, 520, 20};             // speed bar
+static constexpr Region R_FOOTER = {0, 292, 520, 28};             // limit and toast
+static constexpr Region R_VALUES = {520, 49, WIDTH - 520, 207};   // trip / max / average / altitude
+static constexpr Region R_INFO   = {520, 256, WIDTH - 520, 64};   // heading and light
 static constexpr int MAX_DIRTY = 6;
 
 static UiModel shown;
@@ -177,11 +177,12 @@ static bool needsFullRedraw(const UiModel& m) {
          memcmp(&activeTheme(m), &shownTheme, sizeof(ThemeColours));
 }
 
-// Copies a region between frame buffers. With the canvas rotated 1, logical (x, y) is stored
-// at native column LCD_WIDTH - 1 - y, row x, so each logical column is one native row span.
+// Copies a region between frame buffers. With the canvas rotated 3 (USB connector on the
+// right), logical (x, y) is stored at native column y, row LCD_HEIGHT - 1 - x, so each
+// logical column is one native row span.
 static void copyRegion(uint16_t* dst, const uint16_t* src, const Region& r) {
-  int nx = LCD_WIDTH - (r.y + r.h);
-  for (int row = r.x; row < r.x + r.w; row++)
+  int nx = r.y;
+  for (int row = LCD_HEIGHT - (r.x + r.w); row < LCD_HEIGHT - r.x; row++)
     memcpy(dst + row * LCD_WIDTH + nx, src + row * LCD_WIDTH + nx, r.h * sizeof(uint16_t));
 }
 
@@ -191,7 +192,7 @@ void uiRender(const UiModel& model) {
   // time up to date from the frame on screen, then draw only what changed now.
   for (int i = 0; i < lastDirtyCount; i++) copyRegion(back, boardFrontBuffer(), lastDirty[i]);
   canvas.setBuffer(back, LCD_WIDTH, LCD_HEIGHT);
-  canvas.setRotation(1);
+  canvas.setRotation(3);
 
   Region dirty[MAX_DIRTY];
   int n = 0;
@@ -218,7 +219,7 @@ void uiRender(const UiModel& model) {
            m.hz != o.hz || strcmp(m.clock, o.clock), R_STATUS);
     redraw(m.fix != o.fix || m.speed != o.speed || m.overLimit != o.overLimit, R_SPEED);
     redraw(m.fix != o.fix || m.ringValue != o.ringValue || m.ringMax != o.ringMax ||
-           m.overLimit != o.overLimit, R_METER);
+           m.overLimit != o.overLimit || m.limit != o.limit, R_METER);
     redraw(m.limit != o.limit || strcmp(m.toast, o.toast) || m.overLimit != o.overLimit, R_FOOTER);
     redraw(strcmp(m.tripVal, o.tripVal) || strcmp(m.tripUnit, o.tripUnit) ||
            strcmp(m.maxVal, o.maxVal) || strcmp(m.avgVal, o.avgVal) || strcmp(m.altVal, o.altVal),

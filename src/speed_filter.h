@@ -3,7 +3,8 @@
 
 // Turns raw GPS Doppler speed samples into a calm but honest display value.
 //  - adaptive smoothing: steady speeds are smoothed, real acceleration passes through quickly
-//  - standstill clamp: shows 0 when the car is still (GPS speed tiny and IMU quiet)
+//  - standstill clamp: shows 0 when the car is still (GPS speed tiny and IMU quiet), and
+//    needs a sustained speed before leaving 0
 //  - integer display with hysteresis so the number does not flicker between two values
 class SpeedFilter {
  public:
@@ -25,6 +26,8 @@ class SpeedFilter {
   uint32_t _lastTickMs = 0;
   uint8_t _level = 1;
   bool _primed = false;
+  bool _moving = false;          // left standstill (see START_THRESHOLD_MS)
+  uint32_t _startSinceMs = 0;    // when the speed first rose above the start threshold
 };
 
 // Tracks whether the car is stationary from the BMI270 accelerometer.
