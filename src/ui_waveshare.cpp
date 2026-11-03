@@ -52,8 +52,8 @@ static void drawDriving(const UiModel& model) {
   canvas.drawFastHLine(SIDE_X, 48, WIDTH - 20 - SIDE_X, color565(theme.ringTrack));
 
   char speed[12];
-  if (model.fix) snprintf(speed, sizeof(speed), "%d", model.speed);
-  else strcpy(speed, "--");
+  if (model.fix && model.speed > 0) snprintf(speed, sizeof(speed), "%d", model.speed);
+  else strcpy(speed, "--");   // no fix, or below the standstill cut-off
   drawText(speed, SPEED_X, SPEED_BASE, &fSpeedM,
            model.fix ? color565(model.overLimit ? theme.alert : theme.speed) : color565(theme.ringTrack),
            textdatum_t::baseline_center);

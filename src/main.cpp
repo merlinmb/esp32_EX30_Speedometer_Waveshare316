@@ -21,7 +21,6 @@
 SET_LOOP_TASK_STACK_SIZE(36 * 1024);
 
 static constexpr uint32_t FIX_SETTLE_MS = 5000;   // ignore GPS speed for this long after a fix is gained
-static constexpr float MAX_SPEED_HDOP = 2.5f;      // and while HDOP is worse than this
 static SpeedFilter filter;
 static Brightness brightness;
 static UiModel lastModel;
@@ -437,14 +436,14 @@ void loop() {
 #endif
 
   bool newSample = gpsPoll();
-  // A fresh or weak fix reports a few mph of speed while standing still. Ignore the speed
-  // until the fix has settled and while the geometry is poor.
+  // A fresh fix reports a few mph of speed while standing still. Ignore the speed until the
+  // fix has settled.
   static uint32_t fixSinceMs = 0;
   if (!gps.fix) fixSinceMs = 0;
   else if (!fixSinceMs) fixSinceMs = now;
   if (newSample) {
     static uint32_t lastSampleMs = 0;
-    bool trusted = now - fixSinceMs >= FIX_SETTLE_MS && gps.hdop <= MAX_SPEED_HDOP;
+    bool trusted = now - fixSinceMs >= FIX_SETTLE_MS;
     filter.addSample(trusted ? gps.speedMs : 0, now, false);
     float dt = lastSampleMs ? (now - lastSampleMs) / 1000.0f : 0;
     lastSampleMs = now;
