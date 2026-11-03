@@ -134,7 +134,9 @@ void boardBegin() {
   esp_lcd_rgb_panel_config_t config = {};
   config.clk_src = LCD_CLK_SRC_DEFAULT;
   config.dma_burst_size = 64;
-  config.bounce_buffer_size_px = 20 * LCD_WIDTH;   // Waveshare uses 10 lines; 20 gives more slack
+  // 10 lines, as Waveshare. The frame (320x820) must be an even multiple of this, or the
+  // driver resizes it to part of a line and the image shifts sideways (20 lines does that).
+  config.bounce_buffer_size_px = 10 * LCD_WIDTH;
   config.num_fbs = 2;
   config.data_width = 16;
   config.bits_per_pixel = 16;
@@ -180,6 +182,10 @@ uint16_t* boardBackBuffer() {
     swapPending = false;
   }
   return frameBuffers[backIndex];
+}
+
+const uint16_t* boardFrontBuffer() {
+  return frameBuffers[backIndex ^ 1];
 }
 
 void boardPresent() {

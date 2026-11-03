@@ -13,11 +13,13 @@ Features include GPS speed and trip statistics, day/night brightness, configurab
 
 The OTA upload file is `.pio/build/waveshare-esp32-s3-lcd-316/firmware.bin`. Platform and library versions are specified in `platformio.ini`.
 
+The build rebuilds the Arduino core with two ESP-IDF options that keep the display stable while Wi-Fi is on. The first build takes about 7 minutes. Build from the IDE or PowerShell (not Git Bash), and run only one build at a time. **Before changing anything display-related, read [docs/display.md](docs/display.md).**
+
 ## Hardware
 
 Connect the GPS receiver to the board's UART connector: GPS TX to ESP32 RX GPIO44, GPS RX to ESP32 TX GPIO43, and connect power and ground as marked on the board and receiver. Firmware probes both UART directions and common receiver baud rates, then configures the AT6668 for GGA/RMC output and the selected 1, 5, or 10 Hz update rate.
 
-The LCD uses the ST7701 RGB panel driver. Backlight brightness is controlled on GPIO6. The BOOT key on GPIO0 is configured after LCD initialization because that pin is also used during panel startup.
+The LCD uses the ESP-IDF RGB panel driver with bounce buffers and two frame buffers. The settings that keep it stable are in [docs/display.md](docs/display.md). Backlight brightness is controlled on GPIO6. The BOOT key on GPIO0 is configured after LCD initialization because that pin is also used during panel startup.
 
 ## Controls
 

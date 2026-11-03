@@ -150,16 +150,86 @@ void uiBegin() {
   fTitle.loadFont(&wTitle);
 }
 
+// ---------------- partial updates ----------------
+// The panel streams the frame buffer out of PSRAM continuously. Redrawing the whole frame
+// on every change adds so much PSRAM traffic that the stream falls behind and the image
+// shakes. Like LVGL, only the areas whose data changed are redrawn. The regions don't cut
+// through any element that changes.
+struct Region { int16_t x, y, w, h; };
+static constexpr Region R_FULL   = {0, 0, WIDTH, HEIGHT};
+static constexpr Region R_STATUS = {0, 0, WIDTH, 48};             // status line (rule at y 48 is static)
+static constexpr Region R_SPEED  = {0, 49, 530, 215};             // speed digits and units
+static constexpr Region R_METER  = {0, 264, 530, 26};             // speed bar
+static constexpr Region R_FOOTER = {0, 290, 530, 30};             // limit and toast
+static constexpr Region R_VALUES = {531, 49, WIDTH - 531, 207};   // trip / max / average / altitude
+static constexpr Region R_INFO   = {531, 256, WIDTH - 531, 64};   // heading and light
+static constexpr int MAX_DIRTY = 6;
+
+static UiModel shown;
+static ThemeColours shownTheme;
+static bool shownValid = false;
+static Region lastDirty[MAX_DIRTY];
+static int lastDirtyCount = 0;
+
+static bool needsFullRedraw(const UiModel& m) {
+  return !shownValid || m.overlay != Overlay::None || shown.overlay != Overlay::None ||
+         m.night != shown.night || strcmp(m.units, shown.units) ||
+         memcmp(&activeTheme(m), &shownTheme, sizeof(ThemeColours));
+}
+
+// Copies a region between frame buffers. With the canvas rotated 1, logical (x, y) is stored
+// at native column LCD_WIDTH - 1 - y, row x, so each logical column is one native row span.
+static void copyRegion(uint16_t* dst, const uint16_t* src, const Region& r) {
+  int nx = LCD_WIDTH - (r.y + r.h);
+  for (int row = r.x; row < r.x + r.w; row++)
+    memcpy(dst + row * LCD_WIDTH + nx, src + row * LCD_WIDTH + nx, r.h * sizeof(uint16_t));
+}
+
 void uiRender(const UiModel& model) {
-  // The back buffer is off screen; the whole frame is redrawn into it, then swapped in.
-  canvas.setBuffer(boardBackBuffer(), LCD_WIDTH, LCD_HEIGHT);
+  uint16_t* back = boardBackBuffer();
+  // The back buffer still holds the frame before last: bring the areas that changed last
+  // time up to date from the frame on screen, then draw only what changed now.
+  for (int i = 0; i < lastDirtyCount; i++) copyRegion(back, boardFrontBuffer(), lastDirty[i]);
+  canvas.setBuffer(back, LCD_WIDTH, LCD_HEIGHT);
   canvas.setRotation(1);
-  switch (model.overlay) {
-    case Overlay::Settings: drawSettings(model); break;
-    case Overlay::Status: drawStatus(model); break;
-    case Overlay::WifiSetup: drawWifiSetup(model); break;
-    case Overlay::Update: drawUpdate(model); break;
-    default: drawDriving(model); break;
+
+  Region dirty[MAX_DIRTY];
+  int n = 0;
+  if (needsFullRedraw(model)) {
+    switch (model.overlay) {
+      case Overlay::Settings: drawSettings(model); break;
+      case Overlay::Status: drawStatus(model); break;
+      case Overlay::WifiSetup: drawWifiSetup(model); break;
+      case Overlay::Update: drawUpdate(model); break;
+      default: drawDriving(model); break;
+    }
+    dirty[n++] = R_FULL;
+  } else {
+    const UiModel& m = model;
+    const UiModel& o = shown;
+    auto redraw = [&](bool changed, const Region& r) {
+      if (!changed) return;
+      canvas.setClipRect(r.x, r.y, r.w, r.h);
+      drawDriving(model);
+      canvas.clearClipRect();
+      dirty[n++] = r;
+    };
+    redraw(m.gpsConnected != o.gpsConnected || m.fix != o.fix || m.sats != o.sats ||
+           m.hz != o.hz || strcmp(m.clock, o.clock), R_STATUS);
+    redraw(m.fix != o.fix || m.speed != o.speed || m.overLimit != o.overLimit, R_SPEED);
+    redraw(m.fix != o.fix || m.ringValue != o.ringValue || m.ringMax != o.ringMax ||
+           m.overLimit != o.overLimit, R_METER);
+    redraw(m.limit != o.limit || strcmp(m.toast, o.toast) || m.overLimit != o.overLimit, R_FOOTER);
+    redraw(strcmp(m.tripVal, o.tripVal) || strcmp(m.tripUnit, o.tripUnit) ||
+           strcmp(m.maxVal, o.maxVal) || strcmp(m.avgVal, o.avgVal) || strcmp(m.altVal, o.altVal),
+           R_VALUES);
+    redraw(strcmp(m.heading, o.heading) || m.brightPct != o.brightPct, R_INFO);
   }
-  boardPresent();
+  if (n) boardPresent();
+
+  memcpy(lastDirty, dirty, sizeof(Region) * n);
+  lastDirtyCount = n;
+  shown = model;
+  shownTheme = activeTheme(model);
+  shownValid = true;
 }
