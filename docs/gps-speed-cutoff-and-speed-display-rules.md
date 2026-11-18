@@ -30,3 +30,5 @@ Rules worked out on the Waveshare 3.16 speedometer (2026-11-03). The user wants 
 - Fonts are regenerated with tools/make_vlw.py (needs freetype-py; use a scratch venv).
 
 **How to apply:** when porting, copy the filter and loop gating as-is. Re-check the "--" logic and the glyph/stack sizing against the round screen's own fonts. Treat the thresholds as tunable from the serial log.
+
+**Update:** the settle time, start speed and start hold are now settings (`fixSettleSec`, `startSpeedMs`, `startHoldMs`, on the web page), as in the round-display project. The defaults are the values above. The shown speed now rounds up (it never under-reads) and a speed offset can be added.

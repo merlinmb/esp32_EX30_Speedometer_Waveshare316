@@ -17,6 +17,8 @@ class SpeedFilter {
   int displayInt(float unitsPerMs);                 // whole number to show, with hysteresis
 
   void setLevel(uint8_t level) { _level = level; }  // 0 low, 1 medium, 2 high smoothing
+  // Leaving standstill needs the speed above startMs for holdMs without a break.
+  void setStartGate(float startMs, uint32_t holdMs) { _startMs = startMs; _startHoldMs = holdMs; }
 
  private:
   float _filtered = 0;
@@ -26,7 +28,9 @@ class SpeedFilter {
   uint32_t _lastTickMs = 0;
   uint8_t _level = 1;
   bool _primed = false;
-  bool _moving = false;          // left standstill (see START_THRESHOLD_MS)
+  float _startMs = 1.0f;         // ~2.2 mph
+  uint32_t _startHoldMs = 1000;
+  bool _moving = false;          // left standstill
   uint32_t _startSinceMs = 0;    // when the speed first rose above the start threshold
 };
 

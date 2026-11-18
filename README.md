@@ -2,6 +2,10 @@
 
 Firmware for the **Waveshare ESP32-S3-LCD-3.16** with an AT6668 GPS receiver. The board has a 320 x 820 ST7701 RGB display, 16 MB flash, 8 MB PSRAM, and no touch panel. The UI runs in landscape at 820 x 320.
 
+By default it runs as a **head-up display (HUD)**: the screen lies on the dashboard and the speed and a speed gauge are read as a reflection in the windscreen. The image is mirrored and pre-distorted (keystone, curvature, skew, rotation, size and position) for the windscreen, adjusted live with sliders on the device's web page. See [docs/hud.md](docs/hud.md).
+
+![What the panel shows in HUD mode](docs/images/hud-speed-panel-corrected.png)
+
 Features include GPS speed and trip statistics, day/night brightness, configurable colours, Wi-Fi settings, OTA updates, and optional location telemetry to a user-provided API. GPS time sets the system clock; this build has no RTC or battery-status hardware.
 
 ## Build and Upload
@@ -23,7 +27,7 @@ The LCD uses the ESP-IDF RGB panel driver with bounce buffers and two frame buff
 
 ## Controls
 
-- Short press BOOT on the driving screen: cycle the display selection.
+- Short press BOOT on the driving screen: step through the designs A, B1, B2, C, D and the HUD.
 - Hold BOOT for 1 second: open settings.
 - In settings, short press changes the current value; hold for 1 second advances to the next item.
 - Hold BOOT for 3 seconds in settings to save and exit.
@@ -31,11 +35,11 @@ The LCD uses the ESP-IDF RGB panel driver with bounce buffers and two frame buff
 
 The first press while the display is dimmed or off only wakes it. The screen dims after the configured stopped interval and can turn off later; driving or pressing BOOT wakes it. GPS, Wi-Fi, and telemetry continue while the backlight is off.
 
-Settings include units, display selection, day/night colours, automatic or fixed brightness, screen timeout, GPS rate, smoothing, visual speed alerts, Wi-Fi, and telemetry. Speed alerts are displayed on screen; this board build has no vibration motor or speaker.
+Settings include HUD mode, mirroring, gauge style, digit size, the HUD test grid, rotation, units, display selection, day/night colours, automatic or fixed brightness, screen timeout, GPS rate, smoothing, speed offset, visual speed alerts, Wi-Fi, telemetry, and whether the trip resets when the screen turns off. Speed alerts are displayed on screen; this board build has no vibration motor or speaker.
 
 ## Wi-Fi and Settings
 
-Once connected, open `http://ex30-speedo.local` or the device's IP address. The settings page configures Wi-Fi, colours, units, GPS rate, speed alerts, API telemetry, time zone, and OTA password. Wi-Fi setup can also be started from the device settings menu.
+Once connected, open `http://ex30-speedo.local` or the device's IP address. The settings page configures the HUD (with live sliders for the windscreen shape), Wi-Fi, colours, rotation, units, GPS rate, the standstill cut-off, speed offset, speed alerts, automatic trip reset, API telemetry, time zone, and OTA password. Wi-Fi setup can also be started from the device settings menu.
 
 For a USB serial console at 115200 baud, use commands such as:
 
@@ -53,6 +57,16 @@ Open `http://ex30-speedo.local/update` (user `admin`) to upload firmware in a br
 
 `include/secrets.h` and `secrets.ini` are ignored by git. Example templates are provided for preloading Wi-Fi credentials and OTA settings.
 
+## Speed display
+
+- The shown speed rounds up, so it never under-reads, and a *Speed offset* of -10 to +10 can be added to match the car's speedometer.
+- After a new GPS fix the speed is ignored for 5 s, and leaving standstill needs more than 1.0 m/s (2.2 mph) for 1 s. All three are on the web page. See [docs/gps-speed-cutoff-and-speed-display-rules.md](docs/gps-speed-cutoff-and-speed-display-rules.md).
+- When the screen switches off after being parked, the trip (distance, max and average) resets, so each drive starts a new trip. Turn this off with *Reset trip when the screen turns off*.
+
+## MQTT
+
+While Wi-Fi is connected the device connects to an MQTT broker (default `192.168.1.55:1883`; set `MQTT_SERVER_IP`, `MQTT_SERVER_PORT` and `MQTT_FRIENDLYNAME` in `include/secrets.h`). It publishes `tele/esp32_Speedometer/alive` and `/ip`, an init stat on `stat/esp32_Speedometer/init`, and listens on `cmnd/esp32_Speedometer/#` and `cmnd/<friendly name>/#` for `sendstat` and `reset`.
+
 ## Remote API
 
 When telemetry is enabled, GPS points are queued in PSRAM and sent to the configured endpoint. Requests use JSON and optionally include a bearer token. See `tools/test_api_server.py` and the web settings page for configuration details.
@@ -63,11 +77,13 @@ When telemetry is enabled, GPS points are queued in PSRAM and sent to the config
 platformio.ini          board, flash/PSRAM settings and libraries
 src/main.cpp            main loop, BOOT key, settings, trip and time
 src/waveshare_board.cpp ST7701 RGB panel, backlight and button setup
-src/ui_waveshare.cpp    landscape display renderer
+src/ui_waveshare.cpp    landscape display renderer and HUD warp
+src/mqtt.*              MQTT client
 src/gps.*               AT6668 UART detection/configuration and NMEA parsing
 src/brightness.*        sun position and brightness steps
 src/net.*, web_page.h   Wi-Fi, settings page and OTA updates
 src/telemetry.*         queued point upload
+tools/render_hud.py     preview images of the HUD warp (docs/images/hud-*.png)
 src/settings.*          saved settings and colour presets
 ```
 

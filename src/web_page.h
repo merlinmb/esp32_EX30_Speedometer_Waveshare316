@@ -13,6 +13,9 @@ section{background:var(--panel);border-radius:14px;padding:16px;margin:0 0 14px}
 label{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line)}
 label:last-child{border-bottom:0}
 input[type=text],input[type=password],input[type=number],input[type=url],select{background:#0b0e11;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px;min-width:0;width:60%}
+input[type=range]{width:60%}
+.rng{display:grid;grid-template-columns:1fr 60% 52px;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.rng input{width:100%}.rng output{text-align:right;color:var(--sub);font-variant-numeric:tabular-nums}
 input[type=color]{width:56px;height:34px;border:0;background:none;padding:0}
 button{background:var(--acc);color:#001a16;border:0;border-radius:10px;padding:10px 16px;font-weight:600;font-size:15px;cursor:pointer}
 button.sec{background:#25303a;color:var(--txt)}
@@ -49,7 +52,30 @@ button.sec{background:#25303a;color:var(--txt)}
 <p class="sub">Upload a new firmware.bin at <a href="/update" style="color:var(--acc)">/update</a> (user admin), or from PlatformIO with the <b>ota</b> environment while on the same network.</p>
 </section>
 
+<section><h2>Head-up display</h2>
+<p class="sub">Lay the screen on the dashboard under the windscreen and read the speed in its reflection. Changes below show on the screen straight away; press <b>Save HUD</b> to keep them.</p>
+<label>HUD mode (off = dashboard designs)<input type="checkbox" id="h_enabled"></label>
+<label>Mirror top to bottom (screen's top edge towards the windscreen)<input type="checkbox" id="h_mirrorV"></label>
+<label>Mirror left to right<input type="checkbox" id="h_mirrorH"></label>
+<label>Speed gauge<select id="h_gauge"><option value="0">Off</option><option value="1">Bar</option><option value="2">Segments</option></select></label>
+<label>Gauge full scale (0 = 120 mph / 200 km/h)<input type="number" id="h_gaugeMax" min="0" max="300" step="10"></label>
+<label>Digit size<select id="h_digitSize"><option value="0">Medium</option><option value="1">Large</option></select></label>
+<label>Show units<input type="checkbox" id="h_showUnits"></label>
+<label>Show alert limit on gauge<input type="checkbox" id="h_showLimit"></label>
+<label>Show clock<input type="checkbox" id="h_showClock"></label>
+<label>Warn when there is no GPS fix<input type="checkbox" id="h_showGps"></label>
+<label>Colour<input type="color" id="h_colour"></label>
+<label>Colour after dark (with Auto night)<input type="color" id="h_nightColour"></label>
+<label>Over the limit<input type="color" id="h_alertColour"></label>
+<h3 style="font-size:15px;margin:16px 0 4px">Windscreen shape</h3>
+<label>Show test grid while adjusting<input type="checkbox" id="h_testGrid"></label>
+<p class="sub">Turn on the grid, sit in the driving position and adjust until its lines look straight, level and evenly spaced in the windscreen.</p>
+<div id="hudsliders"></div>
+<div class="row" style="margin:10px 0 0"><button onclick="hudSave()">Save HUD</button><button class="sec" onclick="hudReset()">Reset shape</button></div>
+</section>
+
 <section><h2>Display</h2>
+<label>Rotation<select id="rotation"><option value="0">Normal (USB on the right)</option><option value="2">180&deg; (USB on the left)</option></select></label>
 <label>Units<select id="units"><option value="0">mph</option><option value="1">km/h</option></select></label>
 <label>Design<select id="design"><option value="0">A Clean</option><option value="1">B Gauge</option><option value="2">B Gauge solid</option><option value="3">C Info</option><option value="4">D Night</option></select></label>
 <label>Switch to D automatically at night<input type="checkbox" id="autoNight"></label>
@@ -58,10 +84,15 @@ button.sec{background:#25303a;color:var(--txt)}
 <label>Fixed level<select id="fixedLevel"><option value="0">100%</option><option value="1">75%</option><option value="2">50%</option><option value="3">30%</option><option value="4">15%</option></select></label>
 <label>GPS updates<select id="gpsHz"><option value="1">1 Hz</option><option value="5">5 Hz</option><option value="10">10 Hz</option></select></label>
 <label>Smoothing<select id="smoothing"><option value="0">Low</option><option value="1">Medium</option><option value="2">High</option></select></label>
+<label>Ignore speed after a new fix (s)<input type="number" id="fixSettleSec" min="0" max="30" step="1"></label>
+<label>Start moving above (m/s, 1.0 = 2.2 mph)<input type="number" id="startSpeedMs" min="0.6" max="3" step="0.1"></label>
+<label>...for at least (ms)<input type="number" id="startHoldMs" min="0" max="5000" step="100"></label>
+<label>Speed offset (+/- mph or km/h)<input type="number" id="speedOffset" min="-10" max="10" step="1"></label>
 <label>Speed alert<select id="alertMode"><option value="0">Off</option><option value="1">Visual</option><option value="2">Visual reminder</option></select></label>
 <label>Alert limit (0 = off)<input type="number" id="alertLimit" min="0" max="200" step="1"></label>
 <label>Dim after stopped for (min, 0 = never)<input type="number" id="idleDimMin" min="0" max="60"></label>
 <label>Then screen off after (min, 0 = stay dim)<input type="number" id="idleOffMin" min="0" max="60"></label>
+<label>Reset trip when the screen turns off<input type="checkbox" id="resetTripOnSleep"></label>
 </section>
 
 <section><h2>Colours</h2>
@@ -92,11 +123,33 @@ const $=id=>document.getElementById(id);
 function toast(t){const e=$('toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',2200)}
 async function get(u){const r=await fetch(u);return r.json()}
 async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});return r.json()}
-const FIELDS=['units','design','nightBelowDeg','brightMode','fixedLevel','gpsHz','smoothing','alertMode','alertLimit','idleDimMin','idleOffMin','apiUrl','sampleSec','uploadSec','deviceName','tz'];
-const CHECKS=['wifiEnabled','telemetryEnabled','preferHome','autoNight'];
+const FIELDS=['units','rotation','design','nightBelowDeg','brightMode','fixedLevel','gpsHz','smoothing','fixSettleSec','startSpeedMs','startHoldMs','speedOffset','alertMode','alertLimit','idleDimMin','idleOffMin','apiUrl','sampleSec','uploadSec','deviceName','tz'];
+const CHECKS=['wifiEnabled','telemetryEnabled','preferHome','autoNight','resetTripOnSleep'];
+// HUD: [key, label, min, max, step, no-correction value]
+const HS=[['scaleX','Width',0.5,1.5,0.01,1],['scaleY','Height (rake squashes it)',0.5,1.5,0.01,1],
+['keystone','Keystone (+ top wider)',-0.5,0.5,0.01,0],['taper','Side taper (+ right taller)',-0.5,0.5,0.01,0],
+['bow','Curvature (+ ends lower)',-0.5,0.5,0.01,0],['skew','Skew (+ top leans right)',-0.5,0.5,0.01,0],
+['rotateDeg','Rotate (deg, + clockwise)',-15,15,0.1,0],['offsetX','Move (+ right, px)',-300,300,1,0],['offsetY','Move (+ down, px)',-150,150,1,0]];
+const HC=['enabled','mirrorV','mirrorH','showUnits','showLimit','showClock','showGps','testGrid'];
+const HN=['gauge','gaugeMax','digitSize'];const HK=['colour','nightColour','alertColour'];
+let hudBusy=false,hudPend=null;
+function hudSend(o){hudPend=Object.assign(hudPend||{},o);if(!hudBusy)hudFlush()}
+async function hudFlush(){if(!hudPend)return;const b=hudPend;hudPend=null;hudBusy=true;
+try{S.hud=await post('/api/hud',b)}catch(e){}hudBusy=false;if(hudPend)hudFlush()}
+function hudBuild(){const box=$('hudsliders');box.innerHTML='';
+HS.forEach(([k,n,mi,ma,st])=>{const d=document.createElement('div');d.className='rng';
+d.innerHTML='<span>'+n+'</span><input type="range" id="h_'+k+'" min="'+mi+'" max="'+ma+'" step="'+st+'"><output id="o_'+k+'"></output>';box.appendChild(d);
+const i=d.querySelector('input');i.oninput=()=>{$('o_'+k).textContent=i.value;hudSend({[k]:Number(i.value)})}});
+HC.forEach(k=>$('h_'+k).onchange=()=>hudSend({[k]:$('h_'+k).checked}));
+HN.forEach(k=>$('h_'+k).onchange=()=>hudSend({[k]:Number($('h_'+k).value)}));
+HK.forEach(k=>$('h_'+k).oninput=()=>hudSend({[k]:$('h_'+k).value}))}
+function hudShow(){const h=S.hud||{};HS.forEach(([k])=>{$('h_'+k).value=h[k];$('o_'+k).textContent=h[k]});
+HC.forEach(k=>$('h_'+k).checked=!!h[k]);HN.forEach(k=>$('h_'+k).value=h[k]);HK.forEach(k=>$('h_'+k).value=h[k])}
+function hudSave(){hudSend({save:true});toast('HUD saved')}
+function hudReset(){const o={};HS.forEach(([k,,,,,z])=>o[k]=z);hudSend(o);Object.assign(S.hud,o);hudShow()}
 async function load(){S=await get('/api/settings');P=await get('/api/presets');
 FIELDS.forEach(f=>{if($(f))$(f).value=S[f]});CHECKS.forEach(f=>$(f).checked=!!S[f]);
-renderSaved();tab(cur)}
+renderSaved();hudShow();tab(cur)}
 function renderSaved(){(S.networks||[]).forEach((n,i)=>{if($('n'+i)){$('n'+i).value=n.ssid||'';$('p'+i).value='';$('p'+i).placeholder=n.passSet?'(saved)':''}})}
 async function saveNet(i){const ssid=$('n'+i).value.trim();if(!ssid){toast('Enter a network name');return}
 S=await post('/api/wifi',{slot:i,ssid:ssid,pass:$('p'+i).value});renderSaved();toast('Network '+(i+1)+' saved')}
@@ -130,5 +183,5 @@ async function live(){try{const l=await get('/api/status');
 $('live').textContent=(l.fix?l.speed+' '+(S.units==1?'km/h':'mph'):'No GPS fix')+' · '+l.sats+' sats · '+l.hz.toFixed(1)+' Hz · brightness '+l.bright+'%'+(l.night?' (night)':'')+(l.screen==2?' · screen off':l.screen==1?' · screen dimmed':'');
 $('wifistate').textContent=l.wifi?('Connected to '+l.ssid+' ('+l.ip+', '+l.rssi+' dBm)'):'Not connected to Wi-Fi';
 $('tele').textContent='Queued '+l.queued+', sent '+l.sent+', last HTTP '+l.http}catch(e){}}
-load();live();setInterval(live,2000);
+hudBuild();load();live();setInterval(live,2000);
 </script></body></html>)HTML";

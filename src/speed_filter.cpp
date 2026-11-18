@@ -2,8 +2,6 @@
 #include <math.h>
 
 static constexpr float STOP_THRESHOLD_MS = 0.6f;      // ~1.3 mph: below this treat as stopped
-static constexpr float START_THRESHOLD_MS = 1.0f;     // ~2.2 mph: needed to leave standstill...
-static constexpr uint32_t START_HOLD_MS = 1000;       // ...continuously for this long
 static constexpr float STOP_IMU_THRESHOLD_MS = 1.4f;  // ~3 mph: below this AND IMU still -> 0
 static constexpr float HYSTERESIS = 0.60f;            // how far past a whole number before changing
 
@@ -21,9 +19,9 @@ void SpeedFilter::addSample(float v, uint32_t now, bool imuStill) {
   // At rest, GPS speed noise comes in short bursts of 1-3 mph. Only leave standstill once
   // the speed has stayed above the start threshold for a while.
   if (!_moving) {
-    if (v < START_THRESHOLD_MS) _startSinceMs = 0;
+    if (v < _startMs) _startSinceMs = 0;
     else if (!_startSinceMs) _startSinceMs = now;
-    if (_startSinceMs && now - _startSinceMs >= START_HOLD_MS) _moving = true;
+    if (_startSinceMs && now - _startSinceMs >= _startHoldMs) _moving = true;
     else v = 0;
   } else if (v == 0) {
     _moving = false;
@@ -41,11 +39,12 @@ void SpeedFilter::addSample(float v, uint32_t now, bool imuStill) {
 
   // Base time constant by smoothing level. The receiver is already Doppler based and
   // accurate, so these are short: the aim is to remove jitter, not to add lag.
-  static const float TAU[3] = {0.20f, 0.45f, 0.90f};
+  // Low passes the receiver's speed straight through; the integer hysteresis still stops flicker.
+  static const float TAU[3] = {0.0f, 0.15f, 0.40f};
   float tau = TAU[_level > 2 ? 2 : _level];
   // Adaptive: a big difference means real acceleration, so follow it faster.
   float err = fabsf(v - _filtered);
-  tau = tau / (1.0f + err / 1.5f);
+  tau = tau / (1.0f + err / 0.75f);
   float alpha = dt / (tau + dt);
   _filtered += alpha * (v - _filtered);
   if (v == 0 && _filtered < 0.3f) _filtered = 0;
@@ -64,8 +63,10 @@ void SpeedFilter::tick(uint32_t now) {
 int SpeedFilter::displayInt(float unitsPerMs) {
   float u = _filtered * unitsPerMs;
   if (u < 0.5f) { _shown = 0; return 0; }
+  // Round up, as a speedometer should never under-read: rounding u + 0.5 to nearest is ceil(u).
   // Only move to a new integer once we are clearly past it.
-  if (u > _shown + HYSTERESIS || u < _shown - HYSTERESIS) _shown = (int)lroundf(u);
+  float r = u + 0.5f;
+  if (r > _shown + HYSTERESIS || r < _shown - HYSTERESIS) _shown = (int)lroundf(r);
   return _shown;
 }
 

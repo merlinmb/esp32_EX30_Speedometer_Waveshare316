@@ -32,6 +32,36 @@ struct ThemeColours {
   uint32_t limitMark;   // gauge (B) limit marker and pill outline
 };
 
+// Head-up display: the screen lies on the dashboard and is read as a reflection in the
+// windscreen. Geometry is described as the driver sees the reflection; the mirror flags
+// undo the reflection itself. See docs/hud.md.
+enum class HudGauge : uint8_t { Off = 0, Bar = 1, Segments = 2 };
+struct HudSettings {
+  bool enabled = true;              // HUD mode; off = the normal dashboard designs
+  bool mirrorV = true;              // flip top-bottom (screen's top edge towards the windscreen)
+  bool mirrorH = false;             // flip left-right
+  HudGauge gauge = HudGauge::Bar;
+  bool showUnits = true;            // "MPH" beside the digits
+  bool showLimit = true;            // alert limit marker on the gauge
+  bool showClock = false;
+  bool showGps = true;              // "NO GPS" warning while there is no fix
+  uint8_t digitSize = 1;            // 0 medium (220 px font), 1 large (300 px font)
+  uint16_t gaugeMax = 0;            // gauge full scale in display units, 0 = auto (120 mph / 200 km/h)
+  uint32_t colour = 0xFFFFFF;       // digits and gauge
+  uint32_t nightColour = 0x40FF60;  // used instead after dark when Auto night is on
+  uint32_t alertColour = 0xFF2A1A;  // over the alert limit
+  // Geometry, applied in this order (all 0 / 1 = no correction)
+  float scaleX = 1.0f;              // 0.5..1.5 width
+  float scaleY = 1.0f;              // 0.5..1.5 height (the windscreen rake squashes the image)
+  float keystone = 0.0f;            // -0.5..0.5: + makes the top wider than the bottom
+  float taper = 0.0f;               // -0.5..0.5: + makes the right side taller than the left
+  float bow = 0.0f;                 // -0.5..0.5: + bends the ends down (curved windscreen)
+  float skew = 0.0f;                // -0.5..0.5: + leans the top to the right
+  float rotateDeg = 0.0f;           // -15..15, + turns clockwise
+  int16_t offsetX = 0;              // -300..300 px, + moves right
+  int16_t offsetY = 0;              // -150..150 px, + moves down
+};
+
 // Slot 0 = Network 1 (phone hotspot, for travelling), slot 1 = Network 2 (home Wi-Fi)
 static constexpr int MAX_WIFI = 2;
 
@@ -78,6 +108,16 @@ struct Settings {
   float tripMeters = 0;
   float tripMovingSec = 0;
   float tripMaxMs = 0;
+
+  // ---- Added in settings version 5 (appended, so version 4 data still loads) ----
+  // Standstill cut-off
+  uint8_t fixSettleSec = 5;         // speed counts as 0 for this long after a fix is gained
+  float startSpeedMs = 1.0f;        // ~2.2 mph: to leave standstill, speed must stay above this...
+  uint16_t startHoldMs = 1000;      // ...for this long
+  uint8_t rotation = 0;             // 0 = normal (USB connector on the right), 2 = turned 180 degrees
+  int8_t speedOffset = 0;           // whole display units added to the shown speed, -10..+10
+  bool resetTripOnSleep = true;     // clear the trip when the screen turns off while parked
+  HudSettings hud;
 };
 
 extern Settings settings;
@@ -85,7 +125,8 @@ extern Settings settings;
 void settingsDefaults(Settings& s);
 void settingsLoad();
 void settingsSave();
-void settingsSaveTrip();          // light-weight save of trip + last position
+void settingsSaveTrip();
+void hudSanitise(HudSettings& h);  // clamps every HUD value into range          // light-weight save of trip + last position
 
 // Colour presets selectable on the device. The web page can set any colour.
 int dayPresetCount();

@@ -1,6 +1,7 @@
 #include "net.h"
 #include "settings.h"
 #include "telemetry.h"
+#include "mqtt.h"
 #include "web_page.h"
 #include <WiFi.h>
 #include <WebServer.h>
@@ -13,6 +14,8 @@
 volatile bool netSettingsChanged = false;
 volatile bool netTripResetRequested = false;
 volatile int netOtaProgress = -1;
+volatile uint32_t netHudRev = 0;
+volatile bool netHudTestGrid = false;
 LiveData liveData;
 
 static WebServer server(80);
@@ -77,6 +80,66 @@ static void sendJson(JsonDocument& d) {
   server.send(200, "application/json", out);
 }
 
+static void hudToJson(JsonObject o, const HudSettings& h) {
+  o["enabled"] = h.enabled;
+  o["mirrorV"] = h.mirrorV;
+  o["mirrorH"] = h.mirrorH;
+  o["gauge"] = (int)h.gauge;
+  o["showUnits"] = h.showUnits;
+  o["showLimit"] = h.showLimit;
+  o["showClock"] = h.showClock;
+  o["showGps"] = h.showGps;
+  o["digitSize"] = h.digitSize;
+  o["gaugeMax"] = h.gaugeMax;
+  o["colour"] = hex6(h.colour);
+  o["nightColour"] = hex6(h.nightColour);
+  o["alertColour"] = hex6(h.alertColour);
+  o["scaleX"] = h.scaleX;
+  o["scaleY"] = h.scaleY;
+  o["keystone"] = h.keystone;
+  o["taper"] = h.taper;
+  o["bow"] = h.bow;
+  o["skew"] = h.skew;
+  o["rotateDeg"] = h.rotateDeg;
+  o["offsetX"] = h.offsetX;
+  o["offsetY"] = h.offsetY;
+  o["testGrid"] = netHudTestGrid;
+}
+
+// Only the fields present are changed, so the sliders can send one value at a time.
+// Returns true if anything was present.
+static bool hudFromJson(JsonObject o, HudSettings& h) {
+  if (o.isNull()) return false;
+  HudSettings n = h;
+  if (o["enabled"].is<bool>()) n.enabled = o["enabled"];
+  if (o["mirrorV"].is<bool>()) n.mirrorV = o["mirrorV"];
+  if (o["mirrorH"].is<bool>()) n.mirrorH = o["mirrorH"];
+  if (o["gauge"].is<int>()) n.gauge = (HudGauge)constrain(o["gauge"].as<int>(), 0, 2);
+  if (o["showUnits"].is<bool>()) n.showUnits = o["showUnits"];
+  if (o["showLimit"].is<bool>()) n.showLimit = o["showLimit"];
+  if (o["showClock"].is<bool>()) n.showClock = o["showClock"];
+  if (o["showGps"].is<bool>()) n.showGps = o["showGps"];
+  if (o["digitSize"].is<int>()) n.digitSize = constrain(o["digitSize"].as<int>(), 0, 1);
+  if (o["gaugeMax"].is<int>()) n.gaugeMax = constrain(o["gaugeMax"].as<int>(), 0, 300);
+  n.colour = parseHex(o["colour"], n.colour);
+  n.nightColour = parseHex(o["nightColour"], n.nightColour);
+  n.alertColour = parseHex(o["alertColour"], n.alertColour);
+  if (o["scaleX"].is<float>()) n.scaleX = o["scaleX"];
+  if (o["scaleY"].is<float>()) n.scaleY = o["scaleY"];
+  if (o["keystone"].is<float>()) n.keystone = o["keystone"];
+  if (o["taper"].is<float>()) n.taper = o["taper"];
+  if (o["bow"].is<float>()) n.bow = o["bow"];
+  if (o["skew"].is<float>()) n.skew = o["skew"];
+  if (o["rotateDeg"].is<float>()) n.rotateDeg = o["rotateDeg"];
+  if (o["offsetX"].is<int>()) n.offsetX = constrain(o["offsetX"].as<int>(), -300, 300);
+  if (o["offsetY"].is<int>()) n.offsetY = constrain(o["offsetY"].as<int>(), -150, 150);
+  if (o["testGrid"].is<bool>()) netHudTestGrid = o["testGrid"];
+  hudSanitise(n);
+  h = n;
+  netHudRev = netHudRev + 1;
+  return true;
+}
+
 static void settingsJson(JsonDocument& d) {
   d["units"] = (int)settings.units;
   d["design"] = settings.design;
@@ -86,6 +149,12 @@ static void settingsJson(JsonDocument& d) {
   d["fixedLevel"] = settings.fixedLevel;
   d["gpsHz"] = settings.gpsHz;
   d["smoothing"] = (int)settings.smoothing;
+  d["fixSettleSec"] = settings.fixSettleSec;
+  d["startSpeedMs"] = settings.startSpeedMs;
+  d["startHoldMs"] = settings.startHoldMs;
+  d["rotation"] = settings.rotation;
+  d["speedOffset"] = settings.speedOffset;
+  d["resetTripOnSleep"] = settings.resetTripOnSleep;
   d["alertMode"] = (int)settings.alertMode;
   d["alertLimit"] = settings.alertLimit;
   d["idleDimMin"] = settings.idleDimMin;
@@ -100,6 +169,7 @@ static void settingsJson(JsonDocument& d) {
   d["tz"] = settings.tz;
   coloursToJson(d["day"].to<JsonObject>(), settings.day);
   coloursToJson(d["night"].to<JsonObject>(), settings.night);
+  hudToJson(d["hud"].to<JsonObject>(), settings.hud);
   JsonArray n = d["networks"].to<JsonArray>();
   for (auto& w : settings.wifi) {
     JsonObject o = n.add<JsonObject>();
@@ -136,6 +206,12 @@ static void hPostSettings() {
   if (in["fixedLevel"].is<int>()) settings.fixedLevel = constrain(in["fixedLevel"].as<int>(), 0, 4);
   if (in["gpsHz"].is<int>()) { int hz = in["gpsHz"]; settings.gpsHz = hz >= 10 ? 10 : (hz >= 5 ? 5 : 1); }
   if (in["smoothing"].is<int>()) settings.smoothing = (Smoothing)constrain(in["smoothing"].as<int>(), 0, 2);
+  if (in["fixSettleSec"].is<int>()) settings.fixSettleSec = constrain(in["fixSettleSec"].as<int>(), 0, 30);
+  if (in["startSpeedMs"].is<float>()) settings.startSpeedMs = constrain(in["startSpeedMs"].as<float>(), 0.6f, 3.0f);
+  if (in["startHoldMs"].is<int>()) settings.startHoldMs = constrain(in["startHoldMs"].as<int>(), 0, 5000);
+  if (in["rotation"].is<int>()) settings.rotation = in["rotation"].as<int>() >= 2 ? 2 : 0;
+  if (in["speedOffset"].is<int>()) settings.speedOffset = constrain(in["speedOffset"].as<int>(), -10, 10);
+  if (in["resetTripOnSleep"].is<bool>()) settings.resetTripOnSleep = in["resetTripOnSleep"];
   if (in["alertMode"].is<int>()) settings.alertMode = (AlertMode)constrain(in["alertMode"].as<int>(), 0, 2);
   if (in["idleDimMin"].is<int>()) settings.idleDimMin = constrain(in["idleDimMin"].as<int>(), 0, 60);
   if (in["idleOffMin"].is<int>()) settings.idleOffMin = constrain(in["idleOffMin"].as<int>(), 0, 60);
@@ -152,9 +228,22 @@ static void hPostSettings() {
   if (in["tz"].is<const char*>() && strlen(in["tz"]) > 0) copyStr(settings.tz, sizeof(settings.tz), in["tz"]);
   coloursFromJson(in["day"], settings.day);
   coloursFromJson(in["night"], settings.night);
+  hudFromJson(in["hud"], settings.hud);
   settingsSave();
   netSettingsChanged = true;
   hGetSettings();
+}
+
+// Live HUD adjustment: applied at once, saved only when "save" is true (the Save button),
+// so dragging a slider does not wear the flash.
+static void hHud() {
+  JsonDocument in;
+  if (deserializeJson(in, server.arg("plain"))) { server.send(400, "text/plain", "bad json"); return; }
+  hudFromJson(in.as<JsonObject>(), settings.hud);
+  if (in["save"] | false) settingsSave();
+  JsonDocument d;
+  hudToJson(d.to<JsonObject>(), settings.hud);
+  sendJson(d);
 }
 
 static void hPresets() {
@@ -348,6 +437,7 @@ static void startServer() {
   server.on("/api/settings", HTTP_GET, hGetSettings);
   server.on("/api/settings", HTTP_POST, hPostSettings);
   server.on("/api/presets", HTTP_GET, hPresets);
+  server.on("/api/hud", HTTP_POST, hHud);
   server.on("/api/scan", HTTP_GET, hScan);
   server.on("/api/wifi", HTTP_POST, hWifiAdd);
   server.on("/api/wifi/forget", HTTP_POST, hWifiForget);
@@ -457,12 +547,15 @@ static void netTask(void*) {
       startServer();      // settings page also reachable on the phone/home network
       startArduinoOta();  // PlatformIO uploads over Wi-Fi
       ArduinoOTA.handle();
+      mqttLoop();
     }
 
     wl_status_t status = WiFi.status();
     if (status != previousStatus) {
-      if (status == WL_CONNECTED) Serial.printf("[Wi-Fi] Link up, IP %s\n", WiFi.localIP().toString().c_str());
-      else Serial.printf("[Wi-Fi] Link state changed: %d\n", (int)status);
+      if (status == WL_CONNECTED) {
+        Serial.printf("[Wi-Fi] Link up, IP %s\n", WiFi.localIP().toString().c_str());
+        mqttOnWifiConnected();
+      } else Serial.printf("[Wi-Fi] Link state changed: %d\n", (int)status);
       previousStatus = status;
     }
 

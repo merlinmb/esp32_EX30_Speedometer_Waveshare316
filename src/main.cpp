@@ -1,5 +1,7 @@
 // EX30 GPS speedometer for the Waveshare ESP32-S3-LCD-3.16.
-// Short press changes design; hold opens settings. In settings, short press changes a
+// Normally a head-up display (HUD): the screen lies on the dashboard and the speed is read
+// as a reflection in the windscreen. The geometry is set live from the web page.
+// Short press steps through the dashboard designs and the HUD; hold opens settings. In settings, short press changes a
 // value, hold advances to the next item, and a 3 s hold saves and exits.
 // Stopped for 'Dim screen' minutes -> dims; 'Screen off' minutes later -> display off.
 // Movement over ~3 mph for 3 s or the BOOT key wakes it.
@@ -20,7 +22,6 @@
 // the first digit drawn (when a GPS fix arrives) overflowed it and rebooted.
 SET_LOOP_TASK_STACK_SIZE(36 * 1024);
 
-static constexpr uint32_t FIX_SETTLE_MS = 5000;   // ignore GPS speed for this long after a fix is gained
 static SpeedFilter filter;
 static Brightness brightness;
 static UiModel lastModel;
@@ -155,7 +156,40 @@ static void resetTrip();
 static void vTrip(char* b, size_t n) { snprintf(b, n, "Short press to reset"); }
 static void cTrip() { resetTrip(); showToast("Trip reset"); }
 
+static void vHud(char* b, size_t n) { snprintf(b, n, "%s", settings.hud.enabled ? "On (windscreen)" : "Off (dashboard)"); }
+static void cHud() { settings.hud.enabled = !settings.hud.enabled; }
+static void vMirror(char* b, size_t n) {
+  const HudSettings& h = settings.hud;
+  snprintf(b, n, "%s", h.mirrorV ? (h.mirrorH ? "Both ways" : "Top to bottom") : (h.mirrorH ? "Left to right" : "None"));
+}
+static void cMirror() {
+  // Top to bottom -> left to right -> both -> none
+  HudSettings& h = settings.hud;
+  int state = h.mirrorV ? (h.mirrorH ? 2 : 0) : (h.mirrorH ? 1 : 3);
+  state = (state + 1) % 4;
+  h.mirrorV = state == 0 || state == 2;
+  h.mirrorH = state == 1 || state == 2;
+}
+static void vGauge(char* b, size_t n) { const char* v[] = {"Off", "Bar", "Segments"}; snprintf(b, n, "%s", v[(int)settings.hud.gauge]); }
+static void cGauge() { settings.hud.gauge = (HudGauge)(((int)settings.hud.gauge + 1) % 3); }
+static void vDigits(char* b, size_t n) { snprintf(b, n, "%s", settings.hud.digitSize ? "Large" : "Medium"); }
+static void cDigits() { settings.hud.digitSize = !settings.hud.digitSize; }
+static void vGrid(char* b, size_t n) { snprintf(b, n, "%s", netHudTestGrid ? "Showing" : "Off"); }
+static void cGrid() { netHudTestGrid = !netHudTestGrid; }
+static void vRotation(char* b, size_t n) { snprintf(b, n, "%s", settings.rotation == 2 ? "180\xC2\xB0 (USB left)" : "Normal (USB right)"); }
+static void cRotation() { settings.rotation = settings.rotation == 2 ? 0 : 2; }
+static void vOffset(char* b, size_t n) { snprintf(b, n, "%+d %s", settings.speedOffset, settings.units == Units::MPH ? "mph" : "km/h"); }
+static void cOffset() { settings.speedOffset = settings.speedOffset >= 5 ? -5 : settings.speedOffset + 1; }
+static void vTripSleep(char* b, size_t n) { snprintf(b, n, "%s", settings.resetTripOnSleep ? "When screen turns off" : "Only by hand"); }
+static void cTripSleep() { settings.resetTripOnSleep = !settings.resetTripOnSleep; }
+
 static const MenuItem MENU[] = {
+  {"HUD mode", vHud, cHud},
+  {"HUD mirror", vMirror, cMirror},
+  {"HUD gauge", vGauge, cGauge},
+  {"HUD digits", vDigits, cDigits},
+  {"HUD test grid", vGrid, cGrid},
+  {"Rotation", vRotation, cRotation},
   {"Units", vUnits, cUnits},
   {"Design", vDesign, cDesign},
   {"Auto night", vAutoNight, cAutoNight},
@@ -166,11 +200,13 @@ static const MenuItem MENU[] = {
   {"Screen off", vIdleOff, cIdleOff},
   {"GPS updates", vHz, cHz},
   {"Smoothing", vSmooth, cSmooth},
+  {"Speed offset", vOffset, cOffset},
   {"Speed alert", vAlert, cAlert},
   {"Alert limit", vLimit, cLimit},
   {"Wi-Fi", vWifi, cWifi},
   {"Wi-Fi setup", vSetup, cSetup},
   {"Send to API", vTele, cTele},
+  {"Trip reset", vTripSleep, cTripSleep},
   {"Trip", vTrip, cTrip},
 };
 static constexpr int MENU_COUNT = sizeof(MENU) / sizeof(MENU[0]);
@@ -185,6 +221,8 @@ static void resetTrip() {
 
 static void applySettingsChanges() {
   filter.setLevel((uint8_t)settings.smoothing);
+  filter.setStartGate(settings.startSpeedMs, settings.startHoldMs);
+  memset(&lastModel, 0xFF, sizeof(lastModel));   // redraw: rotation or HUD options may have changed
   if (appliedHz != settings.gpsHz) {
     Serial.printf("[Settings] GPS update rate: %u Hz\n", settings.gpsHz);
     gpsSetRate(settings.gpsHz);
@@ -230,6 +268,7 @@ static void updateIdle(uint32_t now, float speedMs, bool busy) {
   if (screen == Screen::Dimmed && settings.idleOffMin && idle >= offAt) {
     screen = Screen::Off;
     boardSetBrightness(0);
+    if (settings.resetTripOnSleep) resetTrip();   // parked long enough: next drive starts a new trip
   }
 
   // Ease the dim level so it fades rather than jumps
@@ -286,7 +325,21 @@ static uint8_t currentDesign() {
   return settings.design;
 }
 
+// Order: A, B1, B2, C, D, HUD, A, ...
 static void stepDesign(int dir) {
+  if (settings.hud.enabled) {
+    settings.hud.enabled = false;
+    if (autoNightActive()) nightPick = DESIGN_A; else settings.design = DESIGN_A;
+    tripDirty = true;
+    showToast("Design A Clean", 1200);
+    return;
+  }
+  if (currentDesign() == DESIGN_COUNT - 1 && dir > 0) {
+    settings.hud.enabled = true;
+    tripDirty = true;
+    showToast("HUD", 1200);
+    return;
+  }
   uint8_t d = (currentDesign() + DESIGN_COUNT + dir) % DESIGN_COUNT;
   if (autoNightActive()) nightPick = d;
   else { settings.design = d; tripDirty = true; }
@@ -411,6 +464,7 @@ void setup() {
   UiModel splash;
   memset(&splash, 0, sizeof(splash));
   splash.units = unitsLabel();
+  splash.hud = settings.hud.enabled;
   strcpy(splash.clock, "--:--");
   strcpy(splash.toast, "Starting GPS...");
   uiRender(splash);
@@ -420,6 +474,7 @@ void setup() {
   Serial.printf("[Boot] GPS listening on RX GPIO%d at %lu baud\n", gps.rxPin, (unsigned long)gps.baud);
   appliedHz = settings.gpsHz;
   filter.setLevel((uint8_t)settings.smoothing);
+  filter.setStartGate(settings.startSpeedMs, settings.startHoldMs);
 
   telemetryBegin();
   netBegin();
@@ -443,7 +498,7 @@ void loop() {
   else if (!fixSinceMs) fixSinceMs = now;
   if (newSample) {
     static uint32_t lastSampleMs = 0;
-    bool trusted = now - fixSinceMs >= FIX_SETTLE_MS;
+    bool trusted = now - fixSinceMs >= (uint32_t)settings.fixSettleSec * 1000;
     filter.addSample(trusted ? gps.speedMs : 0, now, false);
     float dt = lastSampleMs ? (now - lastSampleMs) / 1000.0f : 0;
     lastSampleMs = now;
@@ -465,6 +520,7 @@ void loop() {
 
   float unitsPerMs = unitsFromMs(1.0f);
   int speedInt = filter.displayInt(unitsPerMs);
+  if (speedInt > 0) speedInt = max(1, speedInt + settings.speedOffset);  // user calibration
   float speedUnits = filter.filteredMs() * unitsPerMs;
 
   static uint32_t lastDebug = 0;
@@ -494,7 +550,8 @@ void loop() {
   }
   if (brightness.nightDesign() != lastNightState) { lastNightState = brightness.nightDesign(); nightPick = -1; }
   uint8_t design = currentDesign();
-  bool night = design == DESIGN_D;
+  bool hud = settings.hud.enabled;
+  bool night = hud ? autoNightActive() : design == DESIGN_D;
 
   // --- speed alert ---
   bool over = settings.alertLimit && gps.fix && speedInt > settings.alertLimit;
@@ -557,6 +614,10 @@ void loop() {
   m.speed = speedInt;
   m.ringValue = roundf(filter.displayMs() * unitsPerMs * 4) / 4;   // quarter-unit steps: smooth but not every frame
   m.ringMax = settings.units == Units::MPH ? 120 : 200;
+  if (hud && settings.hud.gaugeMax) m.ringMax = settings.hud.gaugeMax;
+  m.hud = hud;
+  m.testGrid = netHudTestGrid;
+  m.hudRev = netHudRev;
   m.overLimit = over;
   m.sats = gps.sats;
   m.hz = roundf(gps.measuredHz);

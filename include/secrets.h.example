@@ -14,3 +14,8 @@
 
 // Password for over-the-air updates (PlatformIO "ota" environment and http://ex30-speedo.local/update)
 #define OTA_PASSWORD "change-me"
+
+// MQTT broker (optional; these are the defaults when left out)
+#define MQTT_SERVER_IP "192.168.1.55"
+#define MQTT_SERVER_PORT 1883
+#define MQTT_FRIENDLYNAME "mcmddevices"

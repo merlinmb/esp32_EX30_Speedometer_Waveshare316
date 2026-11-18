@@ -19,6 +19,9 @@ int netRssi();
 extern volatile bool netSettingsChanged;
 extern volatile bool netTripResetRequested;
 extern volatile int netOtaProgress;   // -1 idle, 0-100 while a firmware update runs
+// Bumped whenever a HUD setting changes (live sliders on the web page), so the display redraws.
+extern volatile uint32_t netHudRev;
+extern volatile bool netHudTestGrid;  // calibration grid on the HUD (not saved)
 
 // Live values the web page shows on its status line (written by the main loop).
 struct LiveData {

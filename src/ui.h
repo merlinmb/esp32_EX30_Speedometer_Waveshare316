@@ -41,6 +41,10 @@ struct UiModel {
   char staLine[48] = "";
   // Firmware update overlay
   int otaPct = 0;
+  // Head-up display (settings.hud). hudRev changes whenever a HUD setting does.
+  bool hud = false;
+  bool testGrid = false;
+  uint32_t hudRev = 0;
 };
 
 void uiBegin();
